@@ -1,0 +1,9 @@
+.width 4
+
+# Illegal: same-bundle RAW hazard (I1 reads r1 written by I0 in same bundle).
+{
+  i0: movi r1, 42
+  i1: add r2, r1, r0
+  m : nop
+  x : ret
+}
