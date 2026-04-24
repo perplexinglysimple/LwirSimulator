@@ -85,7 +85,7 @@ version = "0.0.0-2026-04-12-0118"
 
 [[package]]
 name = "verus_builtin_macros"
-version = "0.0.0-2026-04-12-0118"
+version = "0.0.0-2026-04-20-1748"
 dependencies = [
  "proc-macro2",
  "quote",
@@ -105,7 +105,7 @@ dependencies = [
 
 [[package]]
 name = "verus_state_machines_macros"
-version = "0.0.0-2026-04-05-0114"
+version = "0.0.0-2026-04-20-1748"
 dependencies = [
  "indexmap",
  "proc-macro2",
@@ -124,7 +124,7 @@ dependencies = [
 
 [[package]]
 name = "vstd"
-version = "0.0.0-2026-04-12-0118"
+version = "0.0.0-2026-04-20-1748"
 dependencies = [
  "verus_builtin",
  "verus_builtin_macros",

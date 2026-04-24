@@ -1,0 +1,32 @@
+.width 4
+
+# A correctly scheduled program: no slot-class violations, no same-bundle
+# hazards, and enough latency gaps for all multi-cycle operations.
+#
+# Schedule plan:
+#   Bundle 0: movi r1=6, movi r2=7   (lat=1 each, ready at cycle 2)
+#   Bundle 1: add r3, r1, r2          (reads r1/r2 at cycle 1, ready; writes r3 lat=1 -> ready at cycle 3)
+#   Bundle 2: std [r0+0x100], r3      (reads r3 at cycle 2, ready_at=3, next_cycle=3: 3>3? NO -> clean)
+#             ret
+
+entry:
+{
+  i0: movi r1, 6
+  i1: movi r2, 7
+  m : nop
+  x : nop
+}
+
+{
+  i0: add r3, r1, r2
+  i1: nop
+  m : nop
+  x : nop
+}
+
+{
+  i0: nop
+  i1: nop
+  m : std [r0 + 0x100], r3
+  x : ret
+}
