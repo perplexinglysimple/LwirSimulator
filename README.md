@@ -117,18 +117,18 @@ Architectural state includes:
 - [Verus](https://github.com/verus-lang/verus) checked out as a sibling repo at
   `../verus` relative to this project
 
-### Build and run the hello-world demo
+### Build and run a text assembly program
 
 ```sh
-cargo run
+cargo run -- examples/hello.lwir
 ```
 
 Expected output:
 
 ```
-LWIR VLIW Simulator — hello world (W=4)
-
-Running 4 bundles…
+LWIR VLIW Simulator (W=4)
+Program: examples/hello.lwir
+Bundles: 4
 
 === LWIR Processor State (width=4) ===
   PC: 4  Cycle: 4  Halted: true
@@ -139,9 +139,66 @@ Running 4 bundles…
   Predicate registers:
     p0 = true
 ==========================================
-
-All assertions passed — 6 × 7 = 42 ✓
 ```
+
+### Text assembly format
+
+`main` currently consumes a simple text assembly file. This is a temporary
+compiler-facing format until the project grows a more standard binary/program
+container.
+
+Current rules:
+- the parser accepts either one bundle per non-empty line or brace-delimited bundle blocks
+- line form uses `|` to separate multiple syllables in the same bundle
+- block form uses one `slot: instruction` per line inside `{ ... }`
+- labels end with `:` and may prefix a bundle line or a following bundle block
+- optional `.width <n>` must match the compiled bundle width
+- comments start with `#`
+- the first token is the slot: `i0`, `i1`, `m`, `x`, or a numeric slot index
+- branches use `branch pN, target` or `branch !pN, target`
+- non-branch instructions may use an optional guard prefix like `[p1]` or `[!p2]`
+- `movi` is accepted as an alias for `mov_imm`
+- loads/stores accept either `dst, base, imm` / `base, src, imm` or bracketed memory syntax like `ldd r1, [r0 + 0x20]` and `std [r0 + 0x20], r1`
+
+Example:
+
+```text
+start: i0 mov_imm r1, 6 | i1 mov_imm r2, 7
+       x mul r3, r1, r2
+       m store_d r0, r3, 0x100
+       x ret
+```
+
+Block-style example:
+
+```text
+.width 4
+
+start:
+{
+  I0: movi r1, 10
+  I1: movi r2, 20
+  M : nop
+  X : nop
+}
+```
+
+Supported operand shapes:
+- `add/sub/and/or/xor/shl/srl/sra/mul/mulh dst, src0, src1`
+- `mov dst, src0`
+- `mov_imm dst, imm`
+- `cmpeq/cmplt/cmpult pdst, src0, src1`
+- `load_b/load_h/load_w/load_d dst, base, imm`
+- `store_b/store_h/store_w/store_d base, src, imm`
+- `lea dst, base, imm`
+- `prefetch base, imm`
+- `branch pred, target`
+- `jump target`
+- `call target`
+- `ret`
+- `pand/por/pxor pdst, psrc0, psrc1`
+- `pnot pdst, psrc0`
+- `nop`
 
 ### Verify with Verus
 
@@ -187,17 +244,30 @@ cargo llvm-cov --workspace --all-targets --lcov --output-path lcov.info
 This writes `lcov.info` at the repo root. GitHub Actions also runs the same
 coverage command and uploads the LCOV file as a build artifact.
 
+The current local baseline is approximately:
+- total line coverage: `98%`
+- `cpu` module line coverage: `97%`
+
 ---
 
 ## Project layout
 
 ```
 src/
-  main.rs      — hello-world demo program
+  main.rs      — CLI runner for text assembly programs
   lib.rs       — crate root
+  asm.rs       — text assembly parser and loader
   isa.rs       — opcodes, slot classes, Syllable type
   bundle.rs    — Bundle<W> with Verus width invariant
-  cpu.rs       — CpuState<W>, execution engine, state printer
+  cpu.rs       — thin module wrapper for the CPU implementation
+  cpu/
+    types.rs   — architectural constants, CpuState, scoreboard types
+    spec.rs    — spec helpers used by the verified execution contracts
+    state.rs   — well-formedness, constructor, register/predicate accessors
+    legality.rs — packet legality checks and scoreboard stall checks
+    memory.rs  — verified load/store helpers
+    execute.rs — writeback, opcode-family execution, step()
+    printer.rs — human-readable state dump
   latency.rs   — LatencyTable (configurable per-opcode cycles)
 ```
 
@@ -221,10 +291,12 @@ run normally without entering the proof boundary.
 
 - [x] Hazard detection: enforce no same-bundle RAW/WAW at runtime
 - [x] Stall insertion: hold `pc` when a consumer reads before `ready_cycle`
+- [x] Broad runtime coverage with CI-published LCOV output
 - [ ] Software-pipelining test kernels (DAXPY, FIR)
 - [ ] `llvm-mca`-style throughput report after execution
 - [ ] Disassembler / pretty-printer for bundles
-- [ ] Integration test harness for the compiler-under-development
+- [ ] Program loader / external input format for compiler-generated bundles
+- [ ] Deterministic trace mode for compiler and scheduler debugging
 
 ## Pre-Compiler TODO
 
@@ -234,8 +306,9 @@ correctness passes before it is a strong compiler-development target.
 - [x] Enforce same-bundle legality rules instead of executing illegal packets silently
 - [x] Implement scoreboard-based stall behavior for read-before-ready hazards
 - [x] Add negative tests for illegal bundles and latency-unsafe issue patterns
-- [ ] Expand tests from smoke coverage to opcode-by-opcode execution coverage
-- [ ] Add targeted tests for predication, control flow, loads/stores, and return semantics
+- [x] Expand tests from smoke coverage to opcode-by-opcode execution coverage
+- [x] Add targeted tests for predication, control flow, loads/stores, and return semantics
+- [x] Add CI coverage reporting and establish a high-coverage baseline
 - [ ] Decide and document the intended behavior for out-of-range addresses and other ISA edge cases
 - [ ] Reduce trusted verification surface further, especially remaining `external_body` items such as `LatencyTable::default`
 - [ ] Add a deterministic trace or execution log mode for compiler debugging

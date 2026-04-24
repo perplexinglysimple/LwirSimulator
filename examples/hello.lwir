@@ -1,0 +1,4 @@
+start: i0 mov_imm r1, 6 | i1 mov_imm r2, 7
+       x mul r3, r1, r2
+       m store_d r0, r3, 0x100
+       x ret

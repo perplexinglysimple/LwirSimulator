@@ -411,8 +411,9 @@ fn call_and_return_follow_link_register() {
 }
 
 #[test]
-fn main_binary_runs_successfully() {
+fn main_binary_runs_example_program_successfully() {
     let output = std::process::Command::new(env!("CARGO_BIN_EXE_lwir_simulator"))
+        .arg("examples/hello.lwir")
         .output()
         .expect("binary should run");
 
@@ -420,8 +421,22 @@ fn main_binary_runs_successfully() {
 
     let stdout = String::from_utf8(output.stdout).expect("stdout should be utf8");
     assert!(stdout.contains("LWIR VLIW Simulator"));
-    assert!(stdout.contains("All assertions passed"));
+    assert!(stdout.contains("Program: examples/hello.lwir"));
+    assert!(stdout.contains("Halted: true"));
     assert!(stdout.contains("42"));
+}
+
+#[test]
+fn main_binary_requires_program_path() {
+    let output = std::process::Command::new(env!("CARGO_BIN_EXE_lwir_simulator"))
+        .output()
+        .expect("binary should run");
+
+    assert!(!output.status.success());
+
+    let stderr = String::from_utf8(output.stderr).expect("stderr should be utf8");
+    assert!(stderr.contains("usage:"));
+    assert!(stderr.contains("<program.lwir>"));
 }
 
 #[test]
