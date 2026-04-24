@@ -11,51 +11,88 @@ verus! {
 /// Slot class determines which functional unit executes an operation.
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
 pub enum SlotClass {
-    Integer,   // ADD, SUB, AND, OR, XOR, SHL, SRL, SRA, CMP
-    Memory,    // LD, ST, LEA, PREFETCH
-    Control,   // MUL, MULH, BR, J, CALL, RET, predicate ops
+    /// Integer ALU slot for arithmetic, logic, moves, and integer compares.
+    Integer,
+    /// Memory/address slot for loads, stores, address formation, and cache hints.
+    Memory,
+    /// Control/multiply slot for control flow, predicate logic, and long-latency multiply work.
+    Control,
 }
 
 /// An opcode for the LWIR ISA.
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
 pub enum Opcode {
     // Integer slot ops
+    /// `dst = src0 + src1` with wrapping arithmetic.
     Add,
+    /// `dst = src0 - src1` with wrapping arithmetic.
     Sub,
+    /// `dst = src0 & src1`.
     And,
+    /// `dst = src0 | src1`.
     Or,
+    /// `dst = src0 ^ src1`.
     Xor,
+    /// Logical left shift by the low 6 bits of `src1`.
     Shl,
+    /// Logical right shift by the low 6 bits of `src1`.
     Srl,
+    /// Arithmetic right shift by the low 6 bits of `src1`.
     Sra,
+    /// Copy `src0` into `dst`.
     Mov,
+    /// Copy the immediate into `dst`.
     MovImm,
+    /// Compare `src0 == src1` and write the boolean result to a predicate register.
     CmpEq,
+    /// Signed compare `src0 < src1` and write the boolean result to a predicate register.
     CmpLt,
+    /// Unsigned compare `src0 < src1` and write the boolean result to a predicate register.
     CmpUlt,
     // Memory slot ops
+    /// Load one byte from memory into `dst`.
     LoadB,
+    /// Load two bytes from memory into `dst`.
     LoadH,
+    /// Load four bytes from memory into `dst`.
     LoadW,
+    /// Load eight bytes from memory into `dst`.
     LoadD,
+    /// Store the low byte of `src1` to memory at `src0 + imm`.
     StoreB,
+    /// Store the low 16 bits of `src1` to memory at `src0 + imm`.
     StoreH,
+    /// Store the low 32 bits of `src1` to memory at `src0 + imm`.
     StoreW,
+    /// Store all 64 bits of `src1` to memory at `src0 + imm`.
     StoreD,
+    /// Compute an effective address: `dst = src0 + imm`.
     Lea,
+    /// Non-binding cache hint with no architectural state change.
     Prefetch,
     // Control/multiply slot ops
+    /// Low 64 bits of `src0 * src1`.
     Mul,
+    /// High 64 bits of the 128-bit product `src0 * src1`.
     MulH,
+    /// Predicated branch to `imm`.
     Branch,
+    /// Unconditional jump to `imm`.
     Jump,
+    /// Save the current bundle PC to the link register and jump to `imm`.
     Call,
+    /// Return to the link register, or halt if the link register is zero.
     Ret,
+    /// Predicate-register AND.
     PAnd,
+    /// Predicate-register OR.
     POr,
+    /// Predicate-register XOR.
     PXor,
+    /// Predicate-register NOT.
     PNot,
     // Universal
+    /// Do nothing.
     Nop,
 }
 
@@ -104,20 +141,28 @@ impl Opcode {
 /// A single syllable (one slot's worth of instruction) in a bundle.
 #[derive(Clone, Debug)]
 pub struct Syllable {
+    /// Operation to execute in this slot.
     pub opcode: Opcode,
-    /// Destination register index (0..32), or None for stores/branches.
+    /// Destination architectural register.
+    /// For GPR-writing ops this names a general-purpose register.
+    /// For compare/predicate ops this names a predicate register.
+    /// `None` is used for instructions with no register destination.
     pub dst: Option<usize>,
-    /// Source register indices.
+    /// Up to two source operands.
+    /// `src[0]` is typically the left operand or base register.
+    /// `src[1]` is typically the right operand or store-data register.
     pub src: [Option<usize>; 2],
-    /// Immediate value (sign-extended 64-bit).
+    /// Immediate payload used for literals, displacements, and branch/jump targets.
     pub imm: i64,
-    /// Predicate register index (0 = p0 = always true).
+    /// Guard predicate index.
+    /// `0` means the always-true architectural predicate `p0`.
     pub predicate: usize,
-    /// If true, execute when predicate is false (negated predicate).
+    /// If set, execute when the guard predicate is false instead of true.
     pub pred_negated: bool,
 }
 
 impl Syllable {
+    /// Construct a canonical no-op syllable.
     /// Postconditions: every field of the NOP syllable is exactly specified.
     pub fn nop() -> (ret: Self)
         ensures

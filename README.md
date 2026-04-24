@@ -208,3 +208,19 @@ run normally without entering the proof boundary.
 - [ ] `llvm-mca`-style throughput report after execution
 - [ ] Disassembler / pretty-printer for bundles
 - [ ] Integration test harness for the compiler-under-development
+
+## Pre-Compiler TODO
+
+The simulator is verified and usable, but it still needs several cleanup and
+correctness passes before it is a strong compiler-development target.
+
+- [ ] Enforce same-bundle legality rules instead of executing illegal packets silently
+- [ ] Implement scoreboard-based stall behavior for read-before-ready hazards
+- [ ] Add negative tests for illegal bundles and latency-unsafe issue patterns
+- [ ] Expand tests from smoke coverage to opcode-by-opcode execution coverage
+- [ ] Add targeted tests for predication, control flow, loads/stores, and return semantics
+- [ ] Decide and document the intended behavior for out-of-range addresses and other ISA edge cases
+- [ ] Reduce trusted verification surface further, especially remaining `external_body` items such as `LatencyTable::default`
+- [ ] Add a deterministic trace or execution log mode for compiler debugging
+- [ ] Add a bundle/program text format or loader so compiler output can run directly in the simulator
+- [ ] Add a disassembler or pretty-printer suitable for golden tests and backend debugging
