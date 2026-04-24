@@ -70,3 +70,55 @@ jobs:
       - name: Run tests
         working-directory: LwirSimulator
         run: cargo test --all-targets
+
+  coverage:
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Check out simulator
+        uses: actions/checkout@v4
+        with:
+          path: LwirSimulator
+
+      - name: Check out Verus
+        uses: actions/checkout@v4
+        with:
+          repository: verus-lang/verus
+          ref: 4bdefc348abf699312e40be2de75b744402ced14
+          path: verus
+
+      - name: Install Rust toolchain
+        uses: dtolnay/rust-toolchain@master
+        with:
+          toolchain: 1.94.0
+          components: llvm-tools
+
+      - name: Cache cargo artifacts
+        uses: actions/cache@v4
+        with:
+          path: |
+            ~/.cargo/bin
+            ~/.cargo/registry
+            ~/.cargo/git
+            LwirSimulator/target
+          key: ${{ runner.os }}-coverage-${{ hashFiles('LwirSimulator/Cargo.lock') }}
+          restore-keys: |
+            ${{ runner.os }}-coverage-
+
+      - name: Install cargo-llvm-cov
+        working-directory: LwirSimulator
+        run: cargo install cargo-llvm-cov --locked
+
+      - name: Generate coverage report
+        working-directory: LwirSimulator
+        run: cargo llvm-cov --workspace --all-targets --lcov --output-path lcov.info
+
+      - name: Print coverage summary
+        working-directory: LwirSimulator
+        run: cargo llvm-cov report --summary-only
+
+      - name: Upload coverage artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: coverage-lcov
+          path: LwirSimulator/lcov.info

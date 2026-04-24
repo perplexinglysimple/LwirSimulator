@@ -170,6 +170,23 @@ cargo test --all-targets
 GitHub Actions runs both `cargo verus verify` and `cargo test --all-targets`
 on every push to `main` and on pull requests.
 
+### Measure code coverage
+
+Install `cargo-llvm-cov` once:
+
+```sh
+cargo install cargo-llvm-cov --locked
+```
+
+Generate a local coverage summary and LCOV report:
+
+```sh
+cargo llvm-cov --workspace --all-targets --lcov --output-path lcov.info
+```
+
+This writes `lcov.info` at the repo root. GitHub Actions also runs the same
+coverage command and uploads the LCOV file as a build artifact.
+
 ---
 
 ## Project layout
@@ -202,8 +219,8 @@ run normally without entering the proof boundary.
 
 ## Planned work
 
-- [ ] Hazard detection: enforce no same-bundle RAW/WAW at runtime
-- [ ] Stall insertion: hold `pc` when a consumer reads before `ready_cycle`
+- [x] Hazard detection: enforce no same-bundle RAW/WAW at runtime
+- [x] Stall insertion: hold `pc` when a consumer reads before `ready_cycle`
 - [ ] Software-pipelining test kernels (DAXPY, FIR)
 - [ ] `llvm-mca`-style throughput report after execution
 - [ ] Disassembler / pretty-printer for bundles
@@ -214,9 +231,9 @@ run normally without entering the proof boundary.
 The simulator is verified and usable, but it still needs several cleanup and
 correctness passes before it is a strong compiler-development target.
 
-- [ ] Enforce same-bundle legality rules instead of executing illegal packets silently
-- [ ] Implement scoreboard-based stall behavior for read-before-ready hazards
-- [ ] Add negative tests for illegal bundles and latency-unsafe issue patterns
+- [x] Enforce same-bundle legality rules instead of executing illegal packets silently
+- [x] Implement scoreboard-based stall behavior for read-before-ready hazards
+- [x] Add negative tests for illegal bundles and latency-unsafe issue patterns
 - [ ] Expand tests from smoke coverage to opcode-by-opcode execution coverage
 - [ ] Add targeted tests for predication, control flow, loads/stores, and return semantics
 - [ ] Decide and document the intended behavior for out-of-range addresses and other ISA edge cases
