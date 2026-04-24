@@ -1,0 +1,70 @@
+name: CI
+
+on:
+  push:
+    branches:
+      - main
+      - master
+  pull_request:
+
+jobs:
+  verus-and-tests:
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Check out simulator
+        uses: actions/checkout@v4
+        with:
+          path: LwirSimulator
+
+      - name: Check out Verus
+        uses: actions/checkout@v4
+        with:
+          repository: verus-lang/verus
+          ref: 4bdefc348abf699312e40be2de75b744402ced14
+          path: verus
+
+      - name: Install Rust toolchain
+        uses: dtolnay/rust-toolchain@master
+        with:
+          toolchain: 1.94.0
+          components: rustc-dev, llvm-tools, rustfmt
+
+      - name: Cache cargo artifacts
+        uses: actions/cache@v4
+        with:
+          path: |
+            ~/.cargo/bin
+            ~/.cargo/registry
+            ~/.cargo/git
+            verus/source/target
+            verus/source/target-verus
+            LwirSimulator/target
+          key: ${{ runner.os }}-cargo-${{ hashFiles('LwirSimulator/Cargo.lock', 'verus/rust-toolchain.toml') }}
+          restore-keys: |
+            ${{ runner.os }}-cargo-
+
+      - name: Build Verus tooling
+        working-directory: verus/source
+        run: |
+          ./tools/get-z3.sh
+          source ../tools/activate
+          vargo build --release
+
+      - name: Stage Verus driver for cargo-verus
+        working-directory: verus/source
+        run: |
+          install -m 755 target-verus/release/verus target/release/verus
+          install -m 755 target-verus/release/rust_verify target/release/rust_verify
+          cp target-verus/release/verus-root target/release/verus-root
+
+      - name: Add cargo-verus to PATH
+        run: echo "${GITHUB_WORKSPACE}/verus/source/target/release" >> "$GITHUB_PATH"
+
+      - name: Verify with Verus
+        working-directory: LwirSimulator
+        run: cargo verus verify
+
+      - name: Run tests
+        working-directory: LwirSimulator
+        run: cargo test --all-targets

@@ -1,18 +1,25 @@
 # LwirSimulator
 
-A cycle-approximate simulator for a **VLIW** (Very Long Instruction Word) processor,
-written in Rust and formally verified with [Verus](https://github.com/verus-lang/verus).
+A cycle-approximate **VLIW** (Very Long Instruction Word) simulator written in
+Rust and verified with [Verus](https://github.com/verus-lang/verus).
 
-The primary purpose of this project is to provide a ground-truth execution
-environment while you develop and test a compiler that targets the LWIR ISA.
+The simulator is the architectural reference for the LWIR ISA and the execution
+model for compiler bring-up, scheduling experiments, and backend validation.
 
 ---
 
 ## Architecture overview
 
-The ISA is modeled after the *FVLIW-64/4* design described in the background
-documents with the following deliberate simplifications that keep the simulator
-easy to target from a compiler:
+LWIR is a statically scheduled VLIW ISA. Bundle structure, slot classes, and
+operation placement are explicit in the instruction stream rather than inferred
+by dynamic issue hardware. The simulator keeps that model concrete and
+compiler-facing: resource usage is visible, latency is modeled explicitly, and
+architectural state evolves in bundle order.
+
+The current implementation follows a conservative FVLIW-style design point that
+keeps backend work tractable while still exercising the important VLIW problems:
+packet legality, latency modeling, predicate handling, and memory/control slot
+constraints.
 
 | Property | Value |
 |---|---|
@@ -36,12 +43,16 @@ let cpu = CpuState::<W>::new(latencies);
 Slot classes cycle through `I, I, M, X` modulo 4 regardless of `W`.
 A 16-wide bundle therefore has four groups of `(I0, I1, M, X)`.
 
+This preserves the core VLIW rule that issue structure is architectural. A
+bundle is not a bag of interchangeable ops; each slot maps to a specific class
+of work.
+
 ---
 
 ## Configurable latencies
 
-Every opcode has a per-instance latency that can be overridden before
-constructing the CPU:
+The machine model assigns an explicit latency to every opcode. The latency table
+is configurable before CPU construction:
 
 ```rust
 let mut latencies = LatencyTable::default();
@@ -62,12 +73,16 @@ Default latencies (in cycles):
 | Predicate ops | 1 |
 | NOP | 0 |
 
+This matches the intended use of the simulator as a cycle-aware reference for
+compiler scheduling work. The model does not hide latency behind dynamic issue
+or out-of-order execution.
+
 ---
 
 ## Reading processor state
 
-`CpuState` is a plain Rust struct — all fields are `pub`.  You can snapshot
-or inspect it at any time:
+`CpuState` is a plain Rust struct with public fields. State inspection,
+checkpointing, and direct test assertions are straightforward:
 
 ```rust
 // read a GPR
@@ -83,7 +98,7 @@ lwir_simulator::cpu::print_cpu_state(&cpu);
 let checkpoint = cpu.clone();
 ```
 
-The state includes:
+Architectural state includes:
 - `gprs: Vec<u64>` — all 32 general-purpose registers
 - `preds: Vec<bool>` — all 16 predicate registers
 - `pc: usize` — bundle-level program counter
@@ -99,8 +114,8 @@ The state includes:
 ### Prerequisites
 
 - Rust (stable, edition 2021)
-- [Verus](https://github.com/verus-lang/verus) source at `/home/george/repos/verus`
-  (the `Cargo.toml` references it via `path =`)
+- [Verus](https://github.com/verus-lang/verus) checked out as a sibling repo at
+  `../verus` relative to this project
 
 ### Build and run the hello-world demo
 
@@ -130,21 +145,30 @@ All assertions passed — 6 × 7 = 42 ✓
 
 ### Verify with Verus
 
-First, build `cargo-verus` from the Verus source tree:
+Build `cargo-verus` from the Verus source tree:
 
 ```sh
-cd /home/george/repos/verus/source
+cd ../verus/source
 source ../tools/activate
 ./tools/get-z3.sh
 vargo build
 ```
 
-Then verify this project:
+Verify this project:
 
 ```sh
 # from LwirSimulator/
 cargo verus verify
 ```
+
+### Run tests
+
+```sh
+cargo test --all-targets
+```
+
+GitHub Actions runs both `cargo verus verify` and `cargo test --all-targets`
+on every push to `main` and on pull requests.
 
 ---
 
@@ -164,14 +188,15 @@ src/
 
 ## Verus annotations
 
-Verus `spec` and `proof` constructs are used to state and verify:
+Verus `spec` and `proof` constructs encode and verify core architectural
+properties:
 
 - `is_valid_width(W)` — bundle width is a power-of-two in [4, 256]
 - Loop invariants in `Bundle::nop_bundle` (length grows monotonically)
 - Pre-conditions on `Bundle::set_slot` (slot index in range)
 
-Functions marked `#[verifier::external]` (like `print_cpu_state`) are
-excluded from verification but still compile and run normally.
+Functions marked `#[verifier::external]` such as `print_cpu_state` compile and
+run normally without entering the proof boundary.
 
 ---
 

@@ -4,9 +4,9 @@ version = "0.1.0"
 edition = "2021"
 
 [dependencies]
-builtin = { path = "/home/george/repos/verus/source/builtin", package = "verus_builtin" }
-builtin_macros = { path = "/home/george/repos/verus/source/builtin_macros", package = "verus_builtin_macros" }
-vstd = { path = "/home/george/repos/verus/source/vstd" }
+builtin = { path = "../verus/source/builtin", package = "verus_builtin" }
+builtin_macros = { path = "../verus/source/builtin_macros", package = "verus_builtin_macros" }
+vstd = { path = "../verus/source/vstd" }
 
 [package.metadata.verus]
 verify = true
