@@ -1,0 +1,23 @@
+.width 4
+
+entry:
+{
+  i0: movi r1, 5
+  i1: movi r2, 7
+  m : nop
+  x : nop
+}
+
+{
+  i0: cmplt p1, r1, r2
+  i1: nop
+  m : nop
+  x : nop
+}
+
+{
+  i0: [p1] movi r3, 1
+  i1: [!p1] movi r3, 0
+  m : std [r0 + 0x140], r3
+  x : ret
+}
