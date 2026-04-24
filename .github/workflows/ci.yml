@@ -59,7 +59,9 @@ jobs:
           cp target-verus/release/verus-root target/release/verus-root
 
       - name: Add cargo-verus to PATH
-        run: echo "${GITHUB_WORKSPACE}/verus/source/target/release" >> "$GITHUB_PATH"
+        run: |
+          echo "${GITHUB_WORKSPACE}/verus/source/target/release" >> "$GITHUB_PATH"
+          echo "VERUS_Z3_PATH=${GITHUB_WORKSPACE}/verus/source/z3" >> "$GITHUB_ENV"
 
       - name: Verify with Verus
         working-directory: LwirSimulator
