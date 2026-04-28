@@ -5,3 +5,4 @@ pub mod bundle;
 pub mod cpu;
 pub mod isa;
 pub mod latency;
+pub mod verifier;
