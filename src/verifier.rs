@@ -287,12 +287,6 @@ fn slot_class_name(sc: SlotClass) -> &'static str {
 
 verus! {
 
-use crate::cpu::{
-    spec_gpr_write_dst, spec_is_gpr_writer, spec_opcode_reads_pred_src,
-    spec_opcode_writes_pred, spec_slot_class_for_index, spec_syl_active,
-};
-use crate::isa::spec_slot_class;
-
 // ---------------------------------------------------------------------------
 // Public types (inside verus! so they are visible to postconditions)
 // ---------------------------------------------------------------------------
