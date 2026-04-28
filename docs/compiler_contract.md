@@ -49,8 +49,8 @@ Within one bundle, a later active syllable must not read a GPR written by an ear
 Formally, for active `i < j`, if `slot i` writes `rD (rD != r0)`, including `call`'s implicit write to `r31`, then `slot j` must not use `rD` as `src0/src1` (and `ret` must not read an updated link register in the same bundle).
 
 **Enforcement mapping:**
-- Existing simulator check: `CpuState::bundle_is_legal` pairwise hazard scan.
-- Planned verifier check: same pairwise static rule.
+- Existing simulator check: `CpuState::bundle_is_legal` pairwise hazard scan (active syllables only).
+- Static verifier (`lwir_verify`): conservative — guard predicates are not evaluated. Every non-nop syllable is treated as unconditionally active, so the check applies to all pairs regardless of guards. Programs with complementary predicated writes to the same destination (e.g., `[p1] mov rD, ... | [!p1] mov rD, ...`) are accepted by the simulator but rejected by the static verifier.
 
 ### 4) No same-bundle WAW hazards
 
@@ -60,8 +60,8 @@ Within one bundle, two active syllables must not both write the same architectur
 - Predicate WAW forbidden (`pD`, excluding `p0` constant-true convention).
 
 **Enforcement mapping:**
-- Existing simulator check: `CpuState::bundle_is_legal` rejects same-destination writes.
-- Planned verifier check: bundle-local destination uniqueness by register class.
+- Existing simulator check: `CpuState::bundle_is_legal` rejects same-destination writes (active syllables only).
+- Static verifier (`lwir_verify`): conservative — same-destination writes are rejected for all syllable pairs regardless of guard predicates. See rule 3 note.
 
 ### 5) No same-bundle predicate hazards
 
@@ -72,8 +72,8 @@ Includes:
 - branch predicate operand reads
 
 **Enforcement mapping:**
-- Existing simulator check: `CpuState::bundle_is_legal` checks predicate RAW/WAW.
-- Planned verifier check: explicit predicate def-use graph per bundle.
+- Existing simulator check: `CpuState::bundle_is_legal` checks predicate RAW/WAW (active syllables only).
+- Static verifier (`lwir_verify`): conservative — guard predicates are not evaluated. See rule 3 note.
 
 ### 6) GPR reads only occur after producer ready cycle
 

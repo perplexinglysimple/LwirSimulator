@@ -53,4 +53,30 @@ pub open spec fn spec_addr<const W: usize>(cpu: &CpuState<W>, syl: &Syllable) ->
     (spec_src(cpu, syl.src[0]).wrapping_add(syl.imm as u64)) as usize
 }
 
+/// Spec: expected slot class for a given slot index (repeats I, I, M, X every 4).
+pub open spec fn spec_slot_class_for_index(slot: int) -> SlotClass {
+    if slot % 4 == 0 || slot % 4 == 1 { SlotClass::Integer }
+    else if slot % 4 == 2 { SlotClass::Memory }
+    else { SlotClass::Control }
+}
+
+/// Spec: GPR destination written by (opcode, dst), including `call`'s implicit r31 write.
+pub open spec fn spec_gpr_write_dst(op: Opcode, dst: Option<usize>) -> Option<usize> {
+    if op == Opcode::Call { Some(31usize) }
+    else if spec_is_gpr_writer(op) { dst }
+    else { None }
+}
+
+/// Spec: does this opcode write a predicate register destination?
+pub open spec fn spec_opcode_writes_pred(op: Opcode) -> bool {
+    op == Opcode::CmpEq || op == Opcode::CmpLt || op == Opcode::CmpUlt
+    || op == Opcode::PAnd || op == Opcode::POr || op == Opcode::PXor || op == Opcode::PNot
+}
+
+/// Spec: does this opcode read predicate registers as ALU source operands?
+/// `branch` reads its predicate via the dedicated `predicate` field, not src[], so it is excluded.
+pub open spec fn spec_opcode_reads_pred_src(op: Opcode) -> bool {
+    op == Opcode::PAnd || op == Opcode::POr || op == Opcode::PXor || op == Opcode::PNot
+}
+
 } // verus!

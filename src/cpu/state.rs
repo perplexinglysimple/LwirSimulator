@@ -166,9 +166,7 @@ impl<const W: usize> CpuState<W> {
     /// Expected slot class for a slot index in a bundle.
     fn slot_class_for_index(slot: usize) -> (ret: SlotClass)
         ensures
-            slot % 4 == 0 || slot % 4 == 1 ==> ret == SlotClass::Integer,
-            slot % 4 == 2                  ==> ret == SlotClass::Memory,
-            slot % 4 == 3                  ==> ret == SlotClass::Control,
+            ret == spec_slot_class_for_index(slot as int),
     {
         match slot % 4 {
             0 | 1 => SlotClass::Integer,
@@ -178,9 +176,7 @@ impl<const W: usize> CpuState<W> {
     }
 
     fn opcode_writes_pred(op: Opcode) -> (ret: bool)
-        ensures
-            ret == (op == Opcode::CmpEq || op == Opcode::CmpLt || op == Opcode::CmpUlt
-                || op == Opcode::PAnd || op == Opcode::POr || op == Opcode::PXor || op == Opcode::PNot),
+        ensures ret == spec_opcode_writes_pred(op),
     {
         op == Opcode::CmpEq || op == Opcode::CmpLt || op == Opcode::CmpUlt
             || op == Opcode::PAnd || op == Opcode::POr || op == Opcode::PXor || op == Opcode::PNot
@@ -197,7 +193,9 @@ impl<const W: usize> CpuState<W> {
         op == Opcode::LoadW || op == Opcode::LoadD
     }
 
-    fn opcode_gpr_write_dst(op: Opcode, dst: Option<usize>) -> (ret: Option<usize>) {
+    fn opcode_gpr_write_dst(op: Opcode, dst: Option<usize>) -> (ret: Option<usize>)
+        ensures ret == spec_gpr_write_dst(op, dst),
+    {
         if op == Opcode::Call {
             Some(31)
         } else if Self::opcode_writes_gpr(op) {
@@ -208,9 +206,7 @@ impl<const W: usize> CpuState<W> {
     }
 
     fn opcode_reads_pred(op: Opcode) -> (ret: bool)
-        ensures
-            ret == (op == Opcode::Branch || op == Opcode::PAnd || op == Opcode::POr
-                || op == Opcode::PXor || op == Opcode::PNot),
+        ensures ret == (spec_opcode_reads_pred_src(op) || op == Opcode::Branch),
     {
         op == Opcode::Branch || op == Opcode::PAnd || op == Opcode::POr
             || op == Opcode::PXor || op == Opcode::PNot
