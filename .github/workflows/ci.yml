@@ -67,9 +67,68 @@ jobs:
         working-directory: LwirSimulator
         run: cargo verus verify
 
-      - name: Run tests
+      - name: Run Rust tests
         working-directory: LwirSimulator
         run: cargo test --all-targets
+
+      - name: Run CPU simulator golden fixtures
+        working-directory: LwirSimulator
+        run: |
+          set -euo pipefail
+          mkdir -p target/ci-traces
+
+          run_trace() {
+            local width="$1"
+            local fixture="$2"
+            local trace="target/ci-traces/$(basename "$fixture").trace"
+
+            cargo run --quiet --bin lwir_simulator -- --trace "$fixture" > "$trace"
+            grep -q "^trace v1 width=${width}$" "$trace"
+            grep -q "^final pc=.*halted=true$" "$trace"
+          }
+
+          run_trace 4 examples/fixtures/legal/w4_control_pred_mem_latency.lwir
+          run_trace 8 examples/fixtures/legal/w8_pred_mem_latency.lwir
+          run_trace 16 examples/fixtures/legal/w16_call_mem_latency.lwir
+
+      - name: Run verifier golden fixtures
+        working-directory: LwirSimulator
+        run: |
+          set -euo pipefail
+          mkdir -p target/ci-verifier
+
+          verify_clean() {
+            local fixture="$1"
+            local output="target/ci-verifier/$(basename "$fixture").txt"
+
+            cargo run --quiet --bin lwir_verify -- "$fixture" > "$output"
+            grep -q "Result  : CLEAN" "$output"
+          }
+
+          verify_illegal() {
+            local fixture="$1"
+            shift
+            local output="target/ci-verifier/$(basename "$fixture").txt"
+            local status
+
+            set +e
+            cargo run --quiet --bin lwir_verify -- "$fixture" > "$output" 2>&1
+            status=$?
+            set -e
+
+            test "$status" -eq 1
+            for rule in "$@"; do
+              grep -q "$rule" "$output"
+            done
+          }
+
+          verify_clean examples/fixtures/legal/w4_control_pred_mem_latency.lwir
+          verify_clean examples/fixtures/legal/w8_pred_mem_latency.lwir
+          verify_clean examples/fixtures/legal/w16_call_mem_latency.lwir
+
+          verify_illegal examples/fixtures/illegal/w4_latency_mul_use.lwir gpr-ready-cycle
+          verify_illegal examples/fixtures/illegal/w8_call_ret_same_bundle.lwir same-bundle-gpr-raw
+          verify_illegal examples/fixtures/illegal/w16_predicate_and_slot.lwir same-bundle-pred-hazard slot-opcode-legality
 
   coverage:
     runs-on: ubuntu-latest

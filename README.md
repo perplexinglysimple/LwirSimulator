@@ -263,8 +263,10 @@ cargo verus verify
 cargo test --all-targets
 ```
 
-GitHub Actions runs `cargo verus verify`, `cargo test --all-targets`, and
-coverage on every push to `main` / `master` and on pull requests.
+GitHub Actions runs `cargo verus verify`, `cargo test --all-targets`, explicit
+`lwir_simulator --trace` runs over the legal golden fixtures, explicit
+`lwir_verify` runs over the legal and illegal golden fixtures, and coverage on
+every push to `main` / `master` and on pull requests.
 
 ### Measure code coverage
 
