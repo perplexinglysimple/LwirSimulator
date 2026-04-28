@@ -1,0 +1,76 @@
+# expected: clean
+# Covers width 4 call/return, predication, load/store effects, and load latency gaps.
+.width 4
+
+start:
+{
+  I0: movi r1, 0x180
+  I1: movi r2, 42
+  M : nop
+  X : call worker
+}
+
+after_call:
+{
+  I0: movi r31, 0
+  I1: nop
+  M : nop
+  X : nop
+}
+
+{
+  I0: nop
+  I1: nop
+  M : std [r1 + 0], r3
+  X : nop
+}
+
+{
+  I0: nop
+  I1: nop
+  M : ldd r4, [r1 + 0]
+  X : nop
+}
+
+{
+  I0: nop
+  I1: nop
+  M : nop
+  X : nop
+}
+
+{
+  I0: nop
+  I1: nop
+  M : nop
+  X : nop
+}
+
+{
+  I0: cmpeq p1, r4, r3
+  I1: nop
+  M : nop
+  X : nop
+}
+
+{
+  I0: [p1] movi r5, 1
+  I1: nop
+  M : nop
+  X : nop
+}
+
+{
+  I0: nop
+  I1: nop
+  M : nop
+  X : ret
+}
+
+worker:
+{
+  I0: add r3, r2, r2
+  I1: nop
+  M : nop
+  X : ret
+}

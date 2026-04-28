@@ -1,0 +1,139 @@
+# expected: clean
+# Covers width 16 repeated slot classes, call/return, stores, loads, and latency gaps.
+.width 16
+
+start:
+{
+  0: movi r1, 0x300
+  1: movi r2, 3
+  2: nop
+  3: nop
+  4: movi r3, 4
+  5: movi r10, 0xff
+  6: nop
+  7: nop
+  8: movi r11, 1
+  9: movi r12, 2
+  10: nop
+  11: nop
+  12: movi r13, 0
+  13: nop
+  14: nop
+  15: call worker
+}
+
+after_call:
+{
+  0: movi r31, 0
+  1: nop
+  2: std [r1 + 0], r4
+  3: nop
+  4: nop
+  5: nop
+  6: stb [r1 + 8], r10
+  7: nop
+  8: nop
+  9: nop
+  10: nop
+  11: nop
+  12: nop
+  13: nop
+  14: nop
+  15: nop
+}
+
+{
+  0: nop
+  1: nop
+  2: ldd r5, [r1 + 0]
+  3: nop
+  4: nop
+  5: nop
+  6: nop
+  7: nop
+  8: nop
+  9: nop
+  10: nop
+  11: nop
+  12: nop
+  13: nop
+  14: nop
+  15: nop
+}
+
+{
+  0: nop
+  1: nop
+  2: nop
+  3: nop
+  4: nop
+  5: nop
+  6: nop
+  7: nop
+  8: nop
+  9: nop
+  10: nop
+  11: nop
+  12: nop
+  13: nop
+  14: nop
+  15: nop
+}
+
+{
+  0: nop
+  1: nop
+  2: nop
+  3: nop
+  4: nop
+  5: nop
+  6: nop
+  7: nop
+  8: nop
+  9: nop
+  10: nop
+  11: nop
+  12: nop
+  13: nop
+  14: nop
+  15: nop
+}
+
+{
+  0: cmpeq p1, r5, r4
+  1: nop
+  2: nop
+  3: nop
+  4: [p1] movi r6, 1
+  5: nop
+  6: nop
+  7: nop
+  8: nop
+  9: nop
+  10: nop
+  11: nop
+  12: nop
+  13: nop
+  14: nop
+  15: ret
+}
+
+worker:
+{
+  0: add r4, r2, r3
+  1: nop
+  2: nop
+  3: nop
+  4: nop
+  5: nop
+  6: nop
+  7: nop
+  8: nop
+  9: nop
+  10: nop
+  11: nop
+  12: nop
+  13: nop
+  14: nop
+  15: ret
+}

@@ -1,3 +1,4 @@
+use lwir_simulator::asm::parse_program;
 use lwir_simulator::bundle::Bundle;
 use lwir_simulator::cpu::CpuState;
 use lwir_simulator::isa::{Opcode, SlotClass, Syllable};
@@ -437,6 +438,116 @@ fn main_binary_requires_program_path() {
     let stderr = String::from_utf8(output.stderr).expect("stderr should be utf8");
     assert!(stderr.contains("usage:"));
     assert!(stderr.contains("<program.lwir>"));
+}
+
+#[test]
+fn deterministic_trace_records_scheduler_visible_events() {
+    let source = r#"
+.width 4
+
+{
+  I0: movi r1, 6
+  I1: movi r2, 7
+  M : nop
+  X : nop
+}
+
+{
+  I0: nop
+  I1: nop
+  M : nop
+  X : mul r3, r1, r2
+}
+
+{
+  I0: nop
+  I1: nop
+  M : std [r0 + 0x100], r3
+  X : nop
+}
+
+{
+  I0: cmplt p1, r1, r2
+  I1: nop
+  M : nop
+  X : nop
+}
+
+{
+  I0: nop
+  I1: nop
+  M : nop
+  X : branch p1, call_site
+}
+
+{
+  I0: movi r9, 99
+  I1: nop
+  M : nop
+  X : nop
+}
+
+call_site:
+{
+  I0: nop
+  I1: nop
+  M : nop
+  X : call worker
+}
+
+after_call:
+{
+  I0: movi r31, 0
+  I1: nop
+  M : nop
+  X : nop
+}
+
+worker:
+{
+  I0: nop
+  I1: nop
+  M : ldd r4, [r0 + 0x100]
+  X : ret
+}
+"#;
+
+    let program = parse_program::<W>(source).expect("trace program should parse");
+    let mut latencies = LatencyTable::default();
+    latencies.set(Opcode::Mul, 5);
+    let mut cpu = CpuState::<W>::new(latencies);
+
+    let trace = cpu.trace_program(&program);
+    let rendered = trace.to_string();
+
+    assert!(cpu.halted);
+    assert!(rendered.starts_with("trace v1 width=4\n"), "{rendered}");
+    assert!(rendered.contains("event kind=stall bundle=2"), "{rendered}");
+    assert!(rendered.contains("gpr slot=3 reg=r3 value=0x000000000000002a"), "{rendered}");
+    assert!(rendered.contains("pred slot=0 reg=p1 value=true"), "{rendered}");
+    assert!(rendered.contains("mem slot=2 kind=store width=8 addr=0x00000100"), "{rendered}");
+    assert!(rendered.contains("mem slot=2 kind=load width=8 addr=0x00000100"), "{rendered}");
+    assert!(rendered.contains("control slot=3 kind=branch pred=p1 taken=true"), "{rendered}");
+    assert!(rendered.contains("control slot=3 kind=call"), "{rendered}");
+    assert!(rendered.contains("control slot=3 kind=ret target=halt halted=true"), "{rendered}");
+    assert!(rendered.contains("final pc=9"), "{rendered}");
+}
+
+#[test]
+fn main_binary_trace_mode_emits_stable_log() {
+    let output = std::process::Command::new(env!("CARGO_BIN_EXE_lwir_simulator"))
+        .arg("--trace")
+        .arg("examples/hello.lwir")
+        .output()
+        .expect("binary should run");
+
+    assert!(output.status.success());
+
+    let stdout = String::from_utf8(output.stdout).expect("stdout should be utf8");
+    assert!(stdout.starts_with("trace v1 width=4\n"), "{stdout}");
+    assert!(stdout.contains("event kind=stall bundle=2"), "{stdout}");
+    assert!(stdout.contains("mem slot=2 kind=store"), "{stdout}");
+    assert!(stdout.contains("final pc="), "{stdout}");
 }
 
 #[test]

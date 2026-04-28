@@ -1,0 +1,25 @@
+# expected-rule: same-bundle-gpr-raw
+.width 8
+
+{
+  0: nop
+  1: nop
+  2: nop
+  3: call done
+  4: nop
+  5: nop
+  6: nop
+  7: ret
+}
+
+done:
+{
+  0: nop
+  1: nop
+  2: nop
+  3: nop
+  4: nop
+  5: nop
+  6: nop
+  7: ret
+}

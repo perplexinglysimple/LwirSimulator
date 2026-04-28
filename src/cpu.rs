@@ -13,3 +13,4 @@ include!("cpu/legality.rs");
 include!("cpu/memory.rs");
 include!("cpu/execute.rs");
 include!("cpu/printer.rs");
+include!("cpu/trace.rs");

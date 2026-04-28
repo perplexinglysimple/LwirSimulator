@@ -1,0 +1,102 @@
+# expected: clean
+# Covers width 8 repeated slot classes, predication, stores, load latency gaps, and mul issue.
+.width 8
+
+{
+  0: movi r1, 0x200
+  1: movi r2, 10
+  2: nop
+  3: nop
+  4: movi r3, 20
+  5: movi r8, 1
+  6: nop
+  7: nop
+}
+
+{
+  0: add r4, r2, r3
+  1: nop
+  2: std [r1 + 0], r2
+  3: mul r5, r2, r3
+  4: nop
+  5: nop
+  6: stb [r1 + 8], r8
+  7: nop
+}
+
+{
+  0: nop
+  1: nop
+  2: nop
+  3: nop
+  4: nop
+  5: nop
+  6: nop
+  7: nop
+}
+
+{
+  0: nop
+  1: nop
+  2: nop
+  3: nop
+  4: nop
+  5: nop
+  6: nop
+  7: nop
+}
+
+{
+  0: nop
+  1: nop
+  2: ldd r6, [r1 + 0]
+  3: nop
+  4: nop
+  5: nop
+  6: nop
+  7: nop
+}
+
+{
+  0: nop
+  1: nop
+  2: nop
+  3: nop
+  4: nop
+  5: nop
+  6: nop
+  7: nop
+}
+
+{
+  0: nop
+  1: nop
+  2: nop
+  3: nop
+  4: nop
+  5: nop
+  6: nop
+  7: nop
+}
+
+{
+  0: cmplt p1, r2, r3
+  1: add r7, r4, r2
+  2: nop
+  3: nop
+  4: nop
+  5: nop
+  6: nop
+  7: nop
+}
+
+{
+  0: nop
+  1: nop
+  2: nop
+  3: nop
+  4: [p1] movi r9, 1
+  5: nop
+  6: nop
+  7: ret
+}

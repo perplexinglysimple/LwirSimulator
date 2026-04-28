@@ -123,15 +123,18 @@ Architectural state includes:
 cargo run --bin lwir_simulator -- examples/hello.lwir
 ```
 
+The simulator reads `.width <n>` when present and dispatches to widths
+`4, 8, 16, 32, 64, 128, 256`; files without a width directive default to `W=4`.
+
 Expected output:
 
 ```
 LWIR VLIW Simulator (W=4)
 Program: examples/hello.lwir
-Bundles: 4
+Bundles: 3
 
 === LWIR Processor State (width=4) ===
-  PC: 4  Cycle: 4  Halted: true
+  PC: 3  Cycle: 7  Halted: true
   GPRs:
     r1  = 0x0000000000000006  (6)
     r2  = 0x0000000000000007  (7)
@@ -140,6 +143,20 @@ Bundles: 4
     p0 = true
 ==========================================
 ```
+
+### Trace execution
+
+Use `--trace` to emit a deterministic scheduler-debug log instead of the final
+state dump:
+
+```sh
+cargo run --bin lwir_simulator -- --trace examples/hello.lwir
+```
+
+The trace format is line-oriented and starts with `trace v1 width=<n>`. Each
+event records the bundle index, cycle, issue/stall/illegal outcome, active
+non-`nop` syllables, stalls, GPR writes, predicate writes, memory effects, and
+branch/jump/call/return decisions, followed by a final `pc/cycle/halted` line.
 
 ### Text assembly format
 
@@ -293,6 +310,7 @@ src/
     memory.rs  - verified load/store helpers
     execute.rs - writeback, opcode-family execution, step()
     printer.rs - human-readable state dump
+    trace.rs   - deterministic execution trace mode
   latency.rs   - LatencyTable (configurable per-opcode cycles)
 
 docs/
@@ -300,7 +318,8 @@ docs/
   lwir_asm_format.md   - stable text assembly format
 
 examples/
-  *.lwir       - clean and intentionally illegal assembly fixtures
+  *.lwir       - clean and intentionally illegal assembly examples
+  fixtures/    - backend golden fixtures across widths 4, 8, and 16
 
 tests/
   smoke.rs     - runtime simulator coverage
@@ -337,6 +356,8 @@ The project has moved past first simulator bring-up:
 - [x] Scoreboard stalls for read-before-ready GPR dependencies
 - [x] Stable bundle-level text assembly format with examples
 - [x] Standalone `lwir_verify` CLI for static compiler-contract checks
+- [x] Deterministic trace mode for scheduler debugging (`lwir_simulator --trace`)
+- [x] Backend-facing legal/illegal golden fixtures across widths `4`, `8`, and `16`
 - [x] Verus specs and lemmas for key bundle/verifier legality properties
 - [x] Runtime, parser, verifier, and CLI tests with CI coverage artifacts
 
@@ -354,18 +375,12 @@ into a compiler bring-up harness:
    and `LatencyTable::default` out of `external_body`, and add specs for the
    GPR ready-cycle diagnostics so timing checks have a formal postcondition like
    the slot and same-bundle hazard checks.
-3. **Add deterministic trace mode.** Emit a stable execution log with bundle
-   index, cycle, stalls, active syllables, register writes, predicate writes,
-   memory effects, and branch/call/return decisions for scheduler debugging.
-4. **Add backend-facing golden fixtures.** Grow examples into a fixture suite
-   for legal and illegal schedules across widths `4`, `8`, and `16`, including
-   call/return, predication, loads/stores, and latency-sensitive kernels.
-5. **Define ISA edge-case policy.** Decide and document behavior for
+3. **Define ISA edge-case policy.** Decide and document behavior for
    out-of-range memory, misaligned accesses, overflow, trap/exception reporting,
    and the currently stubbed memory-ordering opcodes.
-6. **Build compiler-debug presentation tools.** Add a bundle pretty-printer or
+4. **Build compiler-debug presentation tools.** Add a bundle pretty-printer or
    disassembler, plus an `llvm-mca`-style throughput/stall summary after
    execution.
-7. **Exercise real scheduling kernels.** Add DAXPY, FIR, reductions, and small
+5. **Exercise real scheduling kernels.** Add DAXPY, FIR, reductions, and small
    control-heavy kernels to validate software pipelining and predicate-heavy
    schedules against both `lwir_verify` and the simulator.

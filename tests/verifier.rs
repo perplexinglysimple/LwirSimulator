@@ -473,3 +473,51 @@ fn verifier_binary_prints_bundle_count_and_header() {
     assert!(stdout.contains("LWIR Verifier"), "{stdout}");
     assert!(stdout.contains("Bundles"), "{stdout}");
 }
+
+// ---------------------------------------------------------------------------
+// Backend golden fixtures
+// ---------------------------------------------------------------------------
+
+#[test]
+fn backend_legal_fixtures_are_clean() {
+    assert_clean_fixture::<4>("examples/fixtures/legal/w4_control_pred_mem_latency.lwir");
+    assert_clean_fixture::<8>("examples/fixtures/legal/w8_pred_mem_latency.lwir");
+    assert_clean_fixture::<16>("examples/fixtures/legal/w16_call_mem_latency.lwir");
+}
+
+#[test]
+fn backend_illegal_fixtures_report_expected_rules() {
+    assert_illegal_fixture::<4>(
+        "examples/fixtures/illegal/w4_latency_mul_use.lwir",
+        &[Rule::GprReadyCycle],
+    );
+    assert_illegal_fixture::<8>(
+        "examples/fixtures/illegal/w8_call_ret_same_bundle.lwir",
+        &[Rule::SameBundleGprRaw],
+    );
+    assert_illegal_fixture::<16>(
+        "examples/fixtures/illegal/w16_predicate_and_slot.lwir",
+        &[Rule::SameBundlePredHazard, Rule::SlotOpcodeLegality],
+    );
+}
+
+fn assert_clean_fixture<const WIDTH: usize>(path: &str) {
+    let source = std::fs::read_to_string(path).unwrap();
+    let program = parse_program::<WIDTH>(&source).unwrap();
+    let diags = verify_program(&program, &LatencyTable::default());
+    assert!(diags.is_empty(), "{path} should be clean but got: {diags:?}");
+}
+
+fn assert_illegal_fixture<const WIDTH: usize>(path: &str, expected_rules: &[Rule]) {
+    let source = std::fs::read_to_string(path).unwrap();
+    let program = parse_program::<WIDTH>(&source).unwrap();
+    let diags = verify_program(&program, &LatencyTable::default());
+    assert!(!diags.is_empty(), "{path} should produce verifier diagnostics");
+
+    for rule in expected_rules {
+        assert!(
+            has_rule(&diags, rule.clone()),
+            "{path} should report {rule:?}, got: {diags:?}"
+        );
+    }
+}
