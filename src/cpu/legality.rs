@@ -39,18 +39,20 @@ impl<const W: usize> CpuState<W> {
                 let later_active = self.syl_is_active_runtime(later_syl);
 
                 if earlier_active && later_active {
-                    if Self::opcode_writes_gpr(earlier.opcode) {
-                        if let Some(dst) = earlier.dst {
-                            if dst > 0 && dst < NUM_GPRS {
-                                if later_syl.src[0] == Some(dst) || later_syl.src[1] == Some(dst) {
+                    if let Some(dst) = Self::opcode_gpr_write_dst(earlier.opcode, earlier.dst) {
+                        if dst > 0 && dst < NUM_GPRS {
+                            if later_syl.src[0] == Some(dst) || later_syl.src[1] == Some(dst) {
+                                return false;
+                            }
+                            if let Some(later_dst) =
+                                Self::opcode_gpr_write_dst(later_syl.opcode, later_syl.dst)
+                            {
+                                if later_dst == dst {
                                     return false;
                                 }
-                                if Self::opcode_writes_gpr(later_syl.opcode) && later_syl.dst == Some(dst) {
-                                    return false;
-                                }
-                                if later_syl.opcode == Opcode::Ret && dst == 31 {
-                                    return false;
-                                }
+                            }
+                            if later_syl.opcode == Opcode::Ret && dst == 31 {
+                                return false;
                             }
                         }
                     }

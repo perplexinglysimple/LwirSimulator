@@ -266,7 +266,7 @@ impl<const W: usize> CpuState<W> {
         }
     }
 
-    fn exec_control(&mut self, syl: &Syllable)
+    fn exec_control(&mut self, syl: &Syllable, lat: u32)
         requires
             old(self).wf(),
             syl.opcode == Opcode::Branch || syl.opcode == Opcode::Jump || syl.opcode == Opcode::Call || syl.opcode == Opcode::Ret,
@@ -275,7 +275,8 @@ impl<const W: usize> CpuState<W> {
             self.cycle      == old(self).cycle,
             self.memory     == old(self).memory,
             self.preds      == old(self).preds,
-            self.scoreboard == old(self).scoreboard,
+            (syl.opcode == Opcode::Branch || syl.opcode == Opcode::Jump || syl.opcode == Opcode::Ret) ==>
+                self.scoreboard == old(self).scoreboard,
             syl.opcode == Opcode::Branch ==>
                 self.gprs   == old(self).gprs &&
                 self.halted == old(self).halted,
@@ -313,6 +314,9 @@ impl<const W: usize> CpuState<W> {
             Opcode::Call => {
                 let rpc = self.pc;
                 self.write_gpr(31, rpc as u64);
+                self.scoreboard.set(31, ScoreboardEntry {
+                    ready_cycle: self.cycle.wrapping_add(lat as u64),
+                });
                 self.pc = syl.imm as usize;
             }
             Opcode::Ret => {
@@ -535,7 +539,7 @@ impl<const W: usize> CpuState<W> {
                 self.exec_store(syl);
             }
             Opcode::Prefetch => {}
-            Opcode::Branch | Opcode::Jump | Opcode::Call | Opcode::Ret => self.exec_control(syl),
+            Opcode::Branch | Opcode::Jump | Opcode::Call | Opcode::Ret => self.exec_control(syl, lat),
             Opcode::PAnd | Opcode::POr | Opcode::PXor | Opcode::PNot => self.exec_predicate_logic(syl),
         }
     }

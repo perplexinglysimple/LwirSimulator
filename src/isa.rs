@@ -195,18 +195,19 @@ pub assume_specification[<Opcode as core::cmp::PartialEq>::eq]
 } // verus!
 
 impl Opcode {
-    /// Returns true if this opcode writes a GPR destination.
+    /// Returns true if this opcode writes a GPR destination, including implicit writes.
     /// Exhaustive match: adding a new opcode to the enum forces an update here.
     pub fn writes_gpr(self) -> bool {
         match self {
             Opcode::Add | Opcode::Sub | Opcode::And | Opcode::Or | Opcode::Xor
             | Opcode::Shl | Opcode::Srl | Opcode::Sra | Opcode::Mov | Opcode::MovImm
             | Opcode::Mul | Opcode::MulH | Opcode::Lea
-            | Opcode::LoadB | Opcode::LoadH | Opcode::LoadW | Opcode::LoadD => true,
+            | Opcode::LoadB | Opcode::LoadH | Opcode::LoadW | Opcode::LoadD
+            | Opcode::Call => true,
             Opcode::CmpEq | Opcode::CmpLt | Opcode::CmpUlt
             | Opcode::StoreB | Opcode::StoreH | Opcode::StoreW | Opcode::StoreD
             | Opcode::Prefetch
-            | Opcode::Branch | Opcode::Jump | Opcode::Call | Opcode::Ret
+            | Opcode::Branch | Opcode::Jump | Opcode::Ret
             | Opcode::PAnd | Opcode::POr | Opcode::PXor | Opcode::PNot
             | Opcode::Nop => false,
         }

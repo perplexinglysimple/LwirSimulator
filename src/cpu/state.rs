@@ -197,6 +197,16 @@ impl<const W: usize> CpuState<W> {
         op == Opcode::LoadW || op == Opcode::LoadD
     }
 
+    fn opcode_gpr_write_dst(op: Opcode, dst: Option<usize>) -> (ret: Option<usize>) {
+        if op == Opcode::Call {
+            Some(31)
+        } else if Self::opcode_writes_gpr(op) {
+            dst
+        } else {
+            None
+        }
+    }
+
     fn opcode_reads_pred(op: Opcode) -> (ret: bool)
         ensures
             ret == (op == Opcode::Branch || op == Opcode::PAnd || op == Opcode::POr

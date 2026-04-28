@@ -38,6 +38,10 @@ fn ret() -> Syllable {
     syl(Opcode::Ret, None, None, None, 0)
 }
 
+fn call(target: i64) -> Syllable {
+    syl(Opcode::Call, None, None, None, target)
+}
+
 fn cmp_lt(dst: usize, a: usize, b: usize) -> Syllable {
     syl(Opcode::CmpLt, Some(dst), Some(a), Some(b), 0)
 }
@@ -63,6 +67,14 @@ fn p_and(dst: usize, a: usize, b: usize) -> Syllable {
 
 fn has_rule(diags: &[lwir_simulator::verifier::Diagnostic], r: Rule) -> bool {
     diags.iter().any(|d| d.rule == r)
+}
+
+fn write_temp_lwir(name: &str, source: &str) -> std::path::PathBuf {
+    let dir = std::path::Path::new("target").join("test-lwir");
+    std::fs::create_dir_all(&dir).unwrap();
+    let path = dir.join(format!("{name}-{}.lwir", std::process::id()));
+    std::fs::write(&path, source).unwrap();
+    path
 }
 
 // ---------------------------------------------------------------------------
@@ -145,6 +157,16 @@ fn detects_same_bundle_raw_via_ret_reads_link_reg() {
 }
 
 #[test]
+fn detects_same_bundle_raw_via_call_then_ret_in_wide_bundle() {
+    let mut b = Bundle::<8>::nop_bundle();
+    b.set_slot(3, call(0)); // slot 3 implicitly writes r31 (link)
+    b.set_slot(7, ret());   // slot 7 ret implicitly reads r31
+    let program = vec![b];
+    let diags = verify_program(&program, &LatencyTable::default());
+    assert!(has_rule(&diags, Rule::SameBundleGprRaw), "{diags:?}");
+}
+
+#[test]
 fn raw_example_file_is_flagged() {
     let source = std::fs::read_to_string("examples/illegal_raw_same_bundle.lwir").unwrap();
     let program = parse_program::<W>(&source).unwrap();
@@ -175,6 +197,16 @@ fn waw_on_r0_is_not_flagged() {
     let program = vec![b];
     let diags = verify_program(&program, &LatencyTable::default());
     assert!(!has_rule(&diags, Rule::SameBundleGprWaw), "{diags:?}");
+}
+
+#[test]
+fn detects_same_bundle_waw_via_call_and_explicit_link_write_in_wide_bundle() {
+    let mut b = Bundle::<8>::nop_bundle();
+    b.set_slot(3, call(0));      // slot 3 implicitly writes r31
+    b.set_slot(4, movi(31, 0));  // slot 4 also writes r31
+    let program = vec![b];
+    let diags = verify_program(&program, &LatencyTable::default());
+    assert!(has_rule(&diags, Rule::SameBundleGprWaw), "{diags:?}");
 }
 
 // ---------------------------------------------------------------------------
@@ -306,6 +338,21 @@ fn back_to_back_latency1_ops_are_clean() {
 }
 
 #[test]
+fn detects_timing_violation_via_call_link_register_write() {
+    let mut b0 = nop_bundle();
+    b0.set_slot(3, call(1));
+
+    let mut b1 = nop_bundle();
+    b1.set_slot(3, ret());
+
+    let program = vec![b0, b1];
+    let mut lats = LatencyTable::default();
+    lats.set(Opcode::Call, 3);
+    let diags = verify_program(&program, &lats);
+    assert!(has_rule(&diags, Rule::GprReadyCycle), "{diags:?}");
+}
+
+#[test]
 fn detects_timing_violation_in_hello_lwir() {
     // hello.lwir: mul r3 at bundle 1 (lat=3), store r3 at bundle 2 — not enough gap.
     let source = std::fs::read_to_string("examples/hello.lwir").unwrap();
@@ -353,6 +400,30 @@ fn verifier_binary_exits_clean_on_clean_program() {
 
     assert!(out.status.success(), "stdout: {}", String::from_utf8_lossy(&out.stdout));
     let stdout = String::from_utf8(out.stdout).unwrap();
+    assert!(stdout.contains("CLEAN"), "{stdout}");
+}
+
+#[test]
+fn verifier_binary_accepts_width_8_program() {
+    let path = write_temp_lwir(
+        "width8-clean",
+        r#".width 8
+{
+  0: movi r1, 1
+  4: movi r2, 2
+  7: ret
+}
+"#,
+    );
+
+    let out = std::process::Command::new(env!("CARGO_BIN_EXE_lwir_verify"))
+        .arg(&path)
+        .output()
+        .expect("binary should run");
+
+    assert!(out.status.success(), "stdout: {}", String::from_utf8_lossy(&out.stdout));
+    let stdout = String::from_utf8(out.stdout).unwrap();
+    assert!(stdout.contains("W=8"), "{stdout}");
     assert!(stdout.contains("CLEAN"), "{stdout}");
 }
 

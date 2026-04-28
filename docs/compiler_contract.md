@@ -46,7 +46,7 @@ For every active syllable in slot `s`, `opcode.slot_class()` must equal the arch
 
 Within one bundle, a later active syllable must not read a GPR written by an earlier active syllable in the same bundle.
 
-Formally, for active `i < j`, if `slot i` writes `rD (rD != r0)`, then `slot j` must not use `rD` as `src0/src1` (and `ret` must not read updated link register in same bundle).
+Formally, for active `i < j`, if `slot i` writes `rD (rD != r0)`, including `call`'s implicit write to `r31`, then `slot j` must not use `rD` as `src0/src1` (and `ret` must not read an updated link register in the same bundle).
 
 **Enforcement mapping:**
 - Existing simulator check: `CpuState::bundle_is_legal` pairwise hazard scan.

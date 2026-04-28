@@ -730,6 +730,23 @@ fn illegal_same_bundle_ret_dependency_halts_before_execution() {
 }
 
 #[test]
+fn illegal_same_bundle_call_ret_dependency_halts_wide_bundle() {
+    const W8: usize = 8;
+    let mut cpu = CpuState::<W8>::new(LatencyTable::default());
+
+    let mut bad = Bundle::<W8>::nop_bundle();
+    bad.set_slot(3, call(0));
+    bad.set_slot(7, ret());
+    let program = vec![bad];
+
+    assert!(!cpu.step(&program));
+    assert!(cpu.halted);
+    assert_eq!(cpu.pc, 0);
+    assert_eq!(cpu.cycle, 0);
+    assert_eq!(cpu.read_gpr(31), 0);
+}
+
+#[test]
 fn illegal_same_bundle_predicate_raw_halts_before_execution() {
     let mut cpu = CpuState::<W>::new(LatencyTable::default());
     cpu.write_pred(1, true);
@@ -795,6 +812,39 @@ fn ret_stalls_until_link_register_ready() {
     assert!(!cpu.step(&program));
     assert_eq!(cpu.pc, 3);
     assert!(!cpu.halted);
+}
+
+#[test]
+fn ret_stalls_until_call_link_register_ready() {
+    let mut latencies = LatencyTable::default();
+    latencies.set(Opcode::Call, 3);
+
+    let mut cpu = CpuState::<W>::new(latencies);
+
+    let mut b0 = Bundle::<W>::nop_bundle();
+    b0.set_slot(3, call(1));
+
+    let mut b1 = Bundle::<W>::nop_bundle();
+    b1.set_slot(3, ret());
+
+    let program = vec![b0, b1];
+
+    assert!(cpu.step(&program));
+    assert_eq!(cpu.pc, 1);
+    assert_eq!(cpu.cycle, 1);
+    assert_eq!(cpu.read_gpr(31), 1);
+
+    assert!(cpu.step(&program));
+    assert_eq!(cpu.pc, 1);
+    assert_eq!(cpu.cycle, 2);
+
+    assert!(cpu.step(&program));
+    assert_eq!(cpu.pc, 1);
+    assert_eq!(cpu.cycle, 3);
+
+    assert!(cpu.step(&program));
+    assert_eq!(cpu.pc, 1);
+    assert_eq!(cpu.cycle, 4);
 }
 
 #[test]

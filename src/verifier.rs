@@ -114,10 +114,7 @@ fn check_gpr_hazards<const W: usize>(
     let n = bundle.syllables.len();
     for i in 0..n {
         let ei = &bundle.syllables[i];
-        if !ei.opcode.writes_gpr() {
-            continue;
-        }
-        let Some(dst) = ei.dst else {
+        let Some(dst) = gpr_write_dst(ei.opcode, ei.dst) else {
             continue;
         };
         if dst == 0 || dst >= NUM_GPRS {
@@ -153,16 +150,18 @@ fn check_gpr_hazards<const W: usize>(
             }
 
             // Rule 4: WAW — later slot also writes the same GPR.
-            if lj.opcode.writes_gpr() && lj.dst == Some(dst) {
-                diags.push(Diagnostic {
-                    bundle_idx: bidx,
-                    slot: i,
-                    rule: Rule::SameBundleGprWaw,
-                    message: format!(
-                        "bundle {bidx}: slot {i} and slot {j} both write r{dst} \
-                         (same-bundle GPR WAW)"
-                    ),
-                });
+            if let Some(later_dst) = gpr_write_dst(lj.opcode, lj.dst) {
+                if later_dst == dst {
+                    diags.push(Diagnostic {
+                        bundle_idx: bidx,
+                        slot: i,
+                        rule: Rule::SameBundleGprWaw,
+                        message: format!(
+                            "bundle {bidx}: slot {i} and slot {j} both write r{dst} \
+                             (same-bundle GPR WAW)"
+                        ),
+                    });
+                }
             }
         }
     }
@@ -287,14 +286,12 @@ fn update_ready_at<const W: usize>(
     // cycle = issue_cycle + 1.  ready_cycle = write_cycle + latency.
     let write_cycle = issue_cycle + 1;
     for syl in &bundle.syllables {
-        if syl.opcode.writes_gpr() {
-            if let Some(dst) = syl.dst {
-                if dst > 0 && dst < NUM_GPRS {
-                    let lat = latencies.get(syl.opcode) as u64;
-                    let new_ready = write_cycle + lat;
-                    if new_ready > ready_at[dst] {
-                        ready_at[dst] = new_ready;
-                    }
+        if let Some(dst) = gpr_write_dst(syl.opcode, syl.dst) {
+            if dst > 0 && dst < NUM_GPRS {
+                let lat = latencies.get(syl.opcode) as u64;
+                let new_ready = write_cycle + lat;
+                if new_ready > ready_at[dst] {
+                    ready_at[dst] = new_ready;
                 }
             }
         }
@@ -310,6 +307,16 @@ fn slot_class_for_index(slot: usize) -> SlotClass {
         0 | 1 => SlotClass::Integer,
         2 => SlotClass::Memory,
         _ => SlotClass::Control,
+    }
+}
+
+fn gpr_write_dst(op: Opcode, dst: Option<usize>) -> Option<usize> {
+    if op == Opcode::Call {
+        Some(31)
+    } else if op.writes_gpr() {
+        dst
+    } else {
+        None
     }
 }
 
