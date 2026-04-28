@@ -120,7 +120,7 @@ Architectural state includes:
 ### Build and run a text assembly program
 
 ```sh
-cargo run -- examples/hello.lwir
+cargo run --bin lwir_simulator -- examples/hello.lwir
 ```
 
 Expected output:
@@ -143,9 +143,9 @@ Bundles: 4
 
 ### Text assembly format
 
-`main` currently consumes a simple text assembly file. This is a temporary
-compiler-facing format until the project grows a more standard binary/program
-container.
+`lwir_simulator` consumes the stable bundle-level text format documented in
+[`docs/lwir_asm_format.md`](docs/lwir_asm_format.md). The format is intended for
+early backend output, regression fixtures, and golden tests.
 
 Current rules:
 - the parser accepts either one bundle per non-empty line or brace-delimited bundle blocks
@@ -200,6 +200,28 @@ Supported operand shapes:
 - `pnot pdst, psrc0`
 - `nop`
 
+### Check a program with the static verifier
+
+`lwir_verify` checks a `.lwir` / `.lwirasm` file against the compiler/scheduler
+contract in [`docs/compiler_contract.md`](docs/compiler_contract.md) without
+executing the program. It reads `.width <n>` when present and supports widths
+`4, 8, 16, 32, 64, 128, 256`; files without a width directive default to `W=4`.
+
+```sh
+cargo run --bin lwir_verify -- examples/clean_schedule.lwir
+cargo run --bin lwir_verify -- examples/illegal_raw_same_bundle.lwir
+```
+
+Exit codes:
+- `0` - clean program
+- `1` - compiler-contract violation(s)
+- `2` - usage error or parse failure
+
+The verifier is deliberately conservative about predicate guards. It treats
+every non-`nop` syllable as potentially active, so complementary predicated
+writes in the same bundle may run in the simulator but still fail static
+verification.
+
 ### Verify with Verus
 
 Build `cargo-verus` from the Verus source tree:
@@ -224,15 +246,15 @@ cargo verus verify
 cargo test --all-targets
 ```
 
-GitHub Actions runs both `cargo verus verify` and `cargo test --all-targets`
-on every push to `main` and on pull requests.
+GitHub Actions runs `cargo verus verify`, `cargo test --all-targets`, and
+coverage on every push to `main` / `master` and on pull requests.
 
 ### Measure code coverage
 
 Install `cargo-llvm-cov` once:
 
 ```sh
-cargo install cargo-llvm-cov --locked
+cargo install cargo-llvm-cov --locked --force
 ```
 
 Generate a local coverage summary and LCOV report:
@@ -254,63 +276,96 @@ The current local baseline is approximately:
 
 ```
 src/
-  main.rs      — CLI runner for text assembly programs
-  lib.rs       — crate root
-  asm.rs       — text assembly parser and loader
-  isa.rs       — opcodes, slot classes, Syllable type
-  bundle.rs    — Bundle<W> with Verus width invariant
-  cpu.rs       — thin module wrapper for the CPU implementation
+  main.rs      - CLI runner for text assembly programs
+  lib.rs       - crate root
+  asm.rs       - text assembly parser and loader
+  isa.rs       - opcodes, slot classes, Syllable type
+  bundle.rs    - Bundle<W> with Verus width invariant
+  verifier.rs  - static compiler-contract verifier and proof boundary
+  cpu.rs       - thin module wrapper for the CPU implementation
+  bin/
+    lwir_verify.rs - standalone verifier CLI
   cpu/
-    types.rs   — architectural constants, CpuState, scoreboard types
-    spec.rs    — spec helpers used by the verified execution contracts
-    state.rs   — well-formedness, constructor, register/predicate accessors
-    legality.rs — packet legality checks and scoreboard stall checks
-    memory.rs  — verified load/store helpers
-    execute.rs — writeback, opcode-family execution, step()
-    printer.rs — human-readable state dump
-  latency.rs   — LatencyTable (configurable per-opcode cycles)
+    types.rs   - architectural constants, CpuState, scoreboard types
+    spec.rs    - spec helpers used by the verified execution contracts
+    state.rs   - well-formedness, constructor, register/predicate accessors
+    legality.rs - packet legality checks and scoreboard stall checks
+    memory.rs  - verified load/store helpers
+    execute.rs - writeback, opcode-family execution, step()
+    printer.rs - human-readable state dump
+  latency.rs   - LatencyTable (configurable per-opcode cycles)
+
+docs/
+  compiler_contract.md - scheduler legality contract
+  lwir_asm_format.md   - stable text assembly format
+
+examples/
+  *.lwir       - clean and intentionally illegal assembly fixtures
+
+tests/
+  smoke.rs     - runtime simulator coverage
+  verifier.rs  - static verifier and CLI coverage
 ```
 
 ---
 
 ## Verus annotations
 
-Verus `spec` and `proof` constructs encode and verify core architectural
-properties:
+Verus `spec` and `proof` constructs encode core architectural properties and
+connect some executable checks to conservative specs:
 
 - `is_valid_width(W)` — bundle width is a power-of-two in [4, 256]
 - Loop invariants in `Bundle::nop_bundle` (length grows monotonically)
 - Pre-conditions on `Bundle::set_slot` (slot index in range)
+- CPU well-formedness facts for register, predicate, memory, and scoreboard state
+- Conservative verifier predicates for slot legality and same-bundle GPR/predicate hazards
+- Soundness lemmas showing conservative verifier success implies the matching
+  active-pair runtime legality condition
 
 Functions marked `#[verifier::external]` such as `print_cpu_state` compile and
-run normally without entering the proof boundary.
+run normally without entering the proof boundary. The main remaining trusted
+surface is executable code marked `#[verifier::external_body]`, especially the
+static verifier entry point and latency-table defaults.
 
 ---
 
-## Planned work
+## Current status
 
-- [x] Hazard detection: enforce no same-bundle RAW/WAW at runtime
-- [x] Stall insertion: hold `pc` when a consumer reads before `ready_cycle`
-- [x] Broad runtime coverage with CI-published LCOV output
-- [ ] Software-pipelining test kernels (DAXPY, FIR)
-- [ ] `llvm-mca`-style throughput report after execution
-- [ ] Disassembler / pretty-printer for bundles
-- [ ] Program loader / external input format for compiler-generated bundles
-- [ ] Deterministic trace mode for compiler and scheduler debugging
+The project has moved past first simulator bring-up:
 
-## Pre-Compiler TODO
+- [x] Runtime bundle legality checks for slot class, same-bundle RAW/WAW, predicate hazards, and call/return link-register hazards
+- [x] Scoreboard stalls for read-before-ready GPR dependencies
+- [x] Stable bundle-level text assembly format with examples
+- [x] Standalone `lwir_verify` CLI for static compiler-contract checks
+- [x] Verus specs and lemmas for key bundle/verifier legality properties
+- [x] Runtime, parser, verifier, and CLI tests with CI coverage artifacts
 
-The simulator is verified and usable, but it still needs several cleanup and
-correctness passes before it is a strong compiler-development target.
+## Next steps
 
-- [x] Enforce same-bundle legality rules instead of executing illegal packets silently
-- [x] Implement scoreboard-based stall behavior for read-before-ready hazards
-- [x] Add negative tests for illegal bundles and latency-unsafe issue patterns
-- [x] Expand tests from smoke coverage to opcode-by-opcode execution coverage
-- [x] Add targeted tests for predication, control flow, loads/stores, and return semantics
-- [x] Add CI coverage reporting and establish a high-coverage baseline
-- [ ] Decide and document the intended behavior for out-of-range addresses and other ISA edge cases
-- [ ] Reduce trusted verification surface further, especially remaining `external_body` items such as `LatencyTable::default`
-- [ ] Add a deterministic trace or execution log mode for compiler debugging
-- [ ] Add a bundle/program text format or loader so compiler output can run directly in the simulator
-- [ ] Add a disassembler or pretty-printer suitable for golden tests and backend debugging
+The next useful work is to turn the simulator from a checked execution model
+into a compiler bring-up harness:
+
+1. **Synchronize the docs with the implementation.** Update
+   `docs/compiler_contract.md` so its enforcement table describes the current
+   static verifier instead of planned checks, including width dispatch,
+   conservative predicate handling, call-as-`r31` writer behavior, and the
+   distinction between static timing diagnostics and runtime stalls.
+2. **Shrink the trusted verification surface.** Move more of `verify_program`
+   and `LatencyTable::default` out of `external_body`, and add specs for the
+   GPR ready-cycle diagnostics so timing checks have a formal postcondition like
+   the slot and same-bundle hazard checks.
+3. **Add deterministic trace mode.** Emit a stable execution log with bundle
+   index, cycle, stalls, active syllables, register writes, predicate writes,
+   memory effects, and branch/call/return decisions for scheduler debugging.
+4. **Add backend-facing golden fixtures.** Grow examples into a fixture suite
+   for legal and illegal schedules across widths `4`, `8`, and `16`, including
+   call/return, predication, loads/stores, and latency-sensitive kernels.
+5. **Define ISA edge-case policy.** Decide and document behavior for
+   out-of-range memory, misaligned accesses, overflow, trap/exception reporting,
+   and the currently stubbed memory-ordering opcodes.
+6. **Build compiler-debug presentation tools.** Add a bundle pretty-printer or
+   disassembler, plus an `llvm-mca`-style throughput/stall summary after
+   execution.
+7. **Exercise real scheduling kernels.** Add DAXPY, FIR, reductions, and small
+   control-heavy kernels to validate software pipelining and predicate-heavy
+   schedules against both `lwir_verify` and the simulator.

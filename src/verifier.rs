@@ -9,17 +9,12 @@
 /// spec implies the corresponding runtime pairwise condition for any pair of
 /// syllables that are both active in a given CPU state.
 use crate::bundle::Bundle;
-use crate::cpu::{
-    CpuState, NUM_GPRS, NUM_PREDS,
-    spec_gpr_write_dst, spec_is_gpr_writer, spec_opcode_reads_pred_src,
-    spec_opcode_writes_pred, spec_slot_class_for_index, spec_syl_active,
-};
-use crate::isa::{spec_slot_class, Opcode, SlotClass};
+use crate::cpu::{CpuState, NUM_GPRS, NUM_PREDS};
+use crate::isa::{Opcode, SlotClass};
 use crate::latency::LatencyTable;
 use builtin::*;
 use builtin_macros::*;
 use vstd::prelude::*;
-
 
 // ---------------------------------------------------------------------------
 // Private exec helpers (outside verus! — trusted via verify_program's postcondition)
@@ -53,11 +48,7 @@ fn check_slot_legality<const W: usize>(
     }
 }
 
-fn check_gpr_hazards<const W: usize>(
-    bidx: usize,
-    bundle: &Bundle<W>,
-    diags: &mut Vec<Diagnostic>,
-) {
+fn check_gpr_hazards<const W: usize>(bidx: usize, bundle: &Bundle<W>, diags: &mut Vec<Diagnostic>) {
     let n = bundle.syllables.len();
     for i in 0..n {
         let ei = &bundle.syllables[i];
@@ -131,8 +122,8 @@ fn check_pred_hazards<const W: usize>(
         for j in (i + 1)..n {
             let lj = &bundle.syllables[j];
 
-            let reads_as_src = lj.opcode.reads_pred_src()
-                && (lj.src[0] == Some(dst) || lj.src[1] == Some(dst));
+            let reads_as_src =
+                lj.opcode.reads_pred_src() && (lj.src[0] == Some(dst) || lj.src[1] == Some(dst));
             let reads_as_branch = lj.opcode == Opcode::Branch && lj.predicate == dst;
 
             if reads_as_src || reads_as_branch {
@@ -245,23 +236,39 @@ fn gpr_write_dst(op: Opcode, dst: Option<usize>) -> Option<usize> {
 
 fn opcode_name(op: Opcode) -> &'static str {
     match op {
-        Opcode::Add => "add",        Opcode::Sub => "sub",
-        Opcode::And => "and",        Opcode::Or  => "or",
-        Opcode::Xor => "xor",        Opcode::Shl => "shl",
-        Opcode::Srl => "srl",        Opcode::Sra => "sra",
-        Opcode::Mov => "mov",        Opcode::MovImm => "movi",
-        Opcode::CmpEq => "cmpeq",   Opcode::CmpLt => "cmplt",
+        Opcode::Add => "add",
+        Opcode::Sub => "sub",
+        Opcode::And => "and",
+        Opcode::Or => "or",
+        Opcode::Xor => "xor",
+        Opcode::Shl => "shl",
+        Opcode::Srl => "srl",
+        Opcode::Sra => "sra",
+        Opcode::Mov => "mov",
+        Opcode::MovImm => "movi",
+        Opcode::CmpEq => "cmpeq",
+        Opcode::CmpLt => "cmplt",
         Opcode::CmpUlt => "cmpult",
-        Opcode::LoadB => "loadb",    Opcode::LoadH => "loadh",
-        Opcode::LoadW => "loadw",    Opcode::LoadD => "loadd",
-        Opcode::StoreB => "storeb",  Opcode::StoreH => "storeh",
-        Opcode::StoreW => "storew",  Opcode::StoreD => "stored",
-        Opcode::Lea => "lea",        Opcode::Prefetch => "prefetch",
-        Opcode::Mul => "mul",        Opcode::MulH => "mulh",
-        Opcode::Branch => "branch",  Opcode::Jump => "jump",
-        Opcode::Call => "call",      Opcode::Ret => "ret",
-        Opcode::PAnd => "pand",      Opcode::POr => "por",
-        Opcode::PXor => "pxor",      Opcode::PNot => "pnot",
+        Opcode::LoadB => "loadb",
+        Opcode::LoadH => "loadh",
+        Opcode::LoadW => "loadw",
+        Opcode::LoadD => "loadd",
+        Opcode::StoreB => "storeb",
+        Opcode::StoreH => "storeh",
+        Opcode::StoreW => "storew",
+        Opcode::StoreD => "stored",
+        Opcode::Lea => "lea",
+        Opcode::Prefetch => "prefetch",
+        Opcode::Mul => "mul",
+        Opcode::MulH => "mulh",
+        Opcode::Branch => "branch",
+        Opcode::Jump => "jump",
+        Opcode::Call => "call",
+        Opcode::Ret => "ret",
+        Opcode::PAnd => "pand",
+        Opcode::POr => "por",
+        Opcode::PXor => "pxor",
+        Opcode::PNot => "pnot",
         Opcode::Nop => "nop",
     }
 }
@@ -269,7 +276,7 @@ fn opcode_name(op: Opcode) -> &'static str {
 fn slot_class_name(sc: SlotClass) -> &'static str {
     match sc {
         SlotClass::Integer => "Integer",
-        SlotClass::Memory  => "Memory",
+        SlotClass::Memory => "Memory",
         SlotClass::Control => "Control",
     }
 }
@@ -279,6 +286,12 @@ fn slot_class_name(sc: SlotClass) -> &'static str {
 // ---------------------------------------------------------------------------
 
 verus! {
+
+use crate::cpu::{
+    spec_gpr_write_dst, spec_is_gpr_writer, spec_opcode_reads_pred_src,
+    spec_opcode_writes_pred, spec_slot_class_for_index, spec_syl_active,
+};
+use crate::isa::spec_slot_class;
 
 // ---------------------------------------------------------------------------
 // Public types (inside verus! so they are visible to postconditions)
@@ -319,7 +332,8 @@ pub struct Diagnostic {
 
 pub open spec fn spec_slot_ok_in<const W: usize>(bundle: &Bundle<W>, slot: int) -> bool {
     bundle.syllables[slot].opcode == Opcode::Nop ||
-    spec_slot_class(bundle.syllables[slot].opcode) == spec_slot_class_for_index(slot)
+    crate::isa::spec_slot_class(bundle.syllables[slot].opcode)
+        == crate::cpu::spec_slot_class_for_index(slot)
 }
 
 /// A bundle has no slot-opcode legality violations under the conservative contract
@@ -330,13 +344,16 @@ pub open spec fn spec_bundle_slot_ok<const W: usize>(bundle: &Bundle<W>) -> bool
 }
 
 pub open spec fn spec_gpr_pair_ok_in<const W: usize>(bundle: &Bundle<W>, i: int, j: int) -> bool {
-    match spec_gpr_write_dst(bundle.syllables[i].opcode, bundle.syllables[i].dst) {
+    match crate::cpu::spec_gpr_write_dst(bundle.syllables[i].opcode, bundle.syllables[i].dst) {
         None      => true,
         Some(dst) => dst == 0 || dst >= NUM_GPRS || (
             bundle.syllables[j].src[0] != Some(dst) &&
             bundle.syllables[j].src[1] != Some(dst) &&
             !(bundle.syllables[j].opcode == Opcode::Ret && dst == 31) &&
-            match spec_gpr_write_dst(bundle.syllables[j].opcode, bundle.syllables[j].dst) {
+            match crate::cpu::spec_gpr_write_dst(
+                bundle.syllables[j].opcode,
+                bundle.syllables[j].dst,
+            ) {
                 None            => true,
                 Some(later_dst) => later_dst != dst,
             }
@@ -353,13 +370,13 @@ pub open spec fn spec_bundle_gpr_hazard_free<const W: usize>(bundle: &Bundle<W>)
 pub open spec fn spec_pred_pair_ok_in<const W: usize>(bundle: &Bundle<W>, i: int, j: int) -> bool {
     let ei = bundle.syllables[i];
     let lj = bundle.syllables[j];
-    !spec_opcode_writes_pred(ei.opcode) || match ei.dst {
+    !crate::cpu::spec_opcode_writes_pred(ei.opcode) || match ei.dst {
         None      => true,
         Some(dst) => dst == 0 || dst >= NUM_PREDS || (
-            !(spec_opcode_reads_pred_src(lj.opcode) &&
+            !(crate::cpu::spec_opcode_reads_pred_src(lj.opcode) &&
               (lj.src[0] == Some(dst) || lj.src[1] == Some(dst))) &&
             !(lj.opcode == Opcode::Branch && lj.predicate == dst) &&
-            !(spec_opcode_writes_pred(lj.opcode) && lj.dst == Some(dst))
+            !(crate::cpu::spec_opcode_writes_pred(lj.opcode) && lj.dst == Some(dst))
         ),
     }
 }
@@ -387,7 +404,7 @@ pub proof fn lemma_slot_ok_implies_active_slot_legal<const W: usize>(
     requires
         cpu.wf(),
         0 <= slot < bundle.syllables.len(),
-        spec_syl_active(cpu, &bundle.syllables[slot]),
+        crate::cpu::spec_syl_active(cpu, &bundle.syllables[slot]),
         spec_bundle_slot_ok::<W>(bundle),
     ensures
         spec_slot_ok_in::<W>(bundle, slot),
@@ -406,8 +423,8 @@ pub proof fn lemma_gpr_hazard_free_implies_active_pair_ok<const W: usize>(
         cpu.wf(),
         0 <= i < j,
         j < bundle.syllables.len(),
-        spec_syl_active(cpu, &bundle.syllables[i]),
-        spec_syl_active(cpu, &bundle.syllables[j]),
+        crate::cpu::spec_syl_active(cpu, &bundle.syllables[i]),
+        crate::cpu::spec_syl_active(cpu, &bundle.syllables[j]),
         spec_bundle_gpr_hazard_free::<W>(bundle),
     ensures
         spec_gpr_pair_ok_in::<W>(bundle, i, j),
@@ -426,8 +443,8 @@ pub proof fn lemma_pred_hazard_free_implies_active_pair_ok<const W: usize>(
         cpu.wf(),
         0 <= i < j,
         j < bundle.syllables.len(),
-        spec_syl_active(cpu, &bundle.syllables[i]),
-        spec_syl_active(cpu, &bundle.syllables[j]),
+        crate::cpu::spec_syl_active(cpu, &bundle.syllables[i]),
+        crate::cpu::spec_syl_active(cpu, &bundle.syllables[j]),
         spec_bundle_pred_hazard_free::<W>(bundle),
     ensures
         spec_pred_pair_ok_in::<W>(bundle, i, j),
