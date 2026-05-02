@@ -4,7 +4,7 @@ use lwir_simulator::cpu::CpuState;
 use lwir_simulator::isa::{Opcode, Syllable};
 use lwir_simulator::latency::LatencyTable;
 use lwir_simulator::layout::{canonical_layout, ProcessorLayout};
-use lwir_simulator::system::System;
+use lwir_simulator::system::{Bus, BusAccessKind, BusReq, System};
 
 const W: usize = 4;
 
@@ -172,6 +172,49 @@ fn trace_program(
     cpu.trace_program(layout, program)
 }
 
+fn bus_req(cpu_id: usize, address: usize, value: u64) -> BusReq {
+    BusReq {
+        cpu_id,
+        slot: 2,
+        opcode: Opcode::StoreD,
+        kind: BusAccessKind::Store,
+        address,
+        width_bytes: 8,
+        value,
+        dst: None,
+    }
+}
+
+fn contended_store_system(address: i64, cpu0_value: i64, cpu1_value: i64) -> System {
+    let mut layout = canonical_layout(W);
+    layout.topology.cpus = 2;
+
+    let mut cpu0_b0 = Bundle::nop_bundle(W);
+    cpu0_b0.set_slot(0, mov_imm(1, cpu0_value));
+    let cpu0_b1 = Bundle::nop_bundle(W);
+    let mut cpu0_b2 = Bundle::nop_bundle(W);
+    cpu0_b2.set_slot(2, store_d(0, 1, address));
+    let mut cpu0_b3 = Bundle::nop_bundle(W);
+    cpu0_b3.set_slot(3, ret());
+
+    let mut cpu1_b0 = Bundle::nop_bundle(W);
+    cpu1_b0.set_slot(0, mov_imm(1, cpu1_value));
+    let mut cpu1_b1 = Bundle::nop_bundle(W);
+    cpu1_b1.set_slot(2, store_d(0, 1, address));
+    let mut cpu1_b2 = Bundle::nop_bundle(W);
+    cpu1_b2.set_slot(3, ret());
+
+    System::new(
+        layout,
+        vec![
+            vec![cpu0_b0, cpu0_b1, cpu0_b2, cpu0_b3],
+            vec![cpu1_b0, cpu1_b1, cpu1_b2],
+        ],
+        LatencyTable::default(),
+    )
+    .unwrap()
+}
+
 fn hello_world_program() -> Vec<Bundle> {
     let mut b0 = Bundle::nop_bundle(W);
     b0.set_slot(0, mov_imm(1, 6));
@@ -242,10 +285,11 @@ fn system_two_cpus_run_independent_programs_against_shared_memory() {
 
     let mut cpu0_b0 = Bundle::nop_bundle(W);
     cpu0_b0.set_slot(0, mov_imm(1, 0x11));
-    let mut cpu0_b1 = Bundle::nop_bundle(W);
-    cpu0_b1.set_slot(2, store_d(0, 1, 0x100));
+    let cpu0_b1 = Bundle::nop_bundle(W);
     let mut cpu0_b2 = Bundle::nop_bundle(W);
-    cpu0_b2.set_slot(3, ret());
+    cpu0_b2.set_slot(2, store_d(0, 1, 0x100));
+    let mut cpu0_b3 = Bundle::nop_bundle(W);
+    cpu0_b3.set_slot(3, ret());
 
     let mut cpu1_b0 = Bundle::nop_bundle(W);
     cpu1_b0.set_slot(0, mov_imm(1, 0x22));
@@ -257,7 +301,7 @@ fn system_two_cpus_run_independent_programs_against_shared_memory() {
     let mut system = System::new(
         layout,
         vec![
-            vec![cpu0_b0, cpu0_b1, cpu0_b2],
+            vec![cpu0_b0, cpu0_b1, cpu0_b2, cpu0_b3],
             vec![cpu1_b0, cpu1_b1, cpu1_b2],
         ],
         LatencyTable::default(),
@@ -266,7 +310,7 @@ fn system_two_cpus_run_independent_programs_against_shared_memory() {
 
     system.run_until_quiescent();
 
-    assert_eq!(system.cycle, 3);
+    assert_eq!(system.cycle, 4);
     assert!(system.cpus[0].halted);
     assert!(system.cpus[1].halted);
     assert_eq!(system.cpus[0].read_gpr(1), 0x11);
@@ -276,6 +320,70 @@ fn system_two_cpus_run_independent_programs_against_shared_memory() {
     let stored1 = u64::from_le_bytes(system.memory.bytes()[0x108..0x110].try_into().unwrap());
     assert_eq!(stored0, 0x11);
     assert_eq!(stored1, 0x22);
+}
+
+#[test]
+fn bus_arbitration_uses_closed_form_cycle_owner() {
+    let bus = Bus::new(3);
+    let requests = vec![
+        bus_req(2, 0x120, 0xaa),
+        bus_req(0, 0x100, 0xbb),
+        bus_req(1, 0x110, 0xcc),
+    ];
+
+    assert_eq!(bus.owner(0), 0);
+    assert_eq!(bus.owner(1), 1);
+    assert_eq!(bus.owner(2), 2);
+    assert_eq!(bus.owner(3), 0);
+    assert_eq!(bus.arbitrate(2, &requests).unwrap().cpu_id, 2);
+    assert_eq!(bus.arbitrate(1, &requests).unwrap().cpu_id, 1);
+}
+
+#[test]
+fn system_bus_commits_at_most_one_memory_request_per_cycle() {
+    let mut system = contended_store_system(0x100, 0x11, 0x22);
+    system.run_until_quiescent();
+
+    let grants = system
+        .bus
+        .events
+        .iter()
+        .filter(|event| event.granted.is_some())
+        .count();
+    assert_eq!(grants, 2);
+    assert!(system
+        .bus
+        .events
+        .iter()
+        .all(|event| event.granted.as_ref().map_or(0, |_| 1) <= 1));
+}
+
+#[test]
+fn system_bus_serializes_contended_writes_in_cpu_id_order() {
+    let mut system = contended_store_system(0x100, 0x11, 0x22);
+    system.run_until_quiescent();
+
+    let granted = system
+        .bus
+        .events
+        .iter()
+        .filter_map(|event| event.granted.as_ref().map(|req| req.cpu_id))
+        .collect::<Vec<_>>();
+    assert_eq!(granted, vec![1, 0]);
+
+    let stored = u64::from_le_bytes(system.memory.bytes()[0x100..0x108].try_into().unwrap());
+    assert_eq!(stored, 0x11);
+
+    let trace = system.bus.to_string();
+    assert!(trace.contains("bus trace v1"), "{trace}");
+    assert!(
+        trace.contains("bus cycle=1 winner=cpu1 grant=cpu1:slot2:store@0x00000100/8"),
+        "{trace}"
+    );
+    assert!(
+        trace.contains("bus cycle=2 winner=cpu0 grant=cpu0:slot2:store@0x00000100/8"),
+        "{trace}"
+    );
 }
 
 #[test]

@@ -13,6 +13,7 @@ use crate::cpu::CpuState;
 use crate::isa::Opcode;
 use crate::latency::LatencyTable;
 use crate::layout::ProcessorLayout;
+use crate::system::{bus_owner, bus_slot, is_memory_opcode, system_worst_case_load_latency};
 use builtin::*;
 use builtin_macros::*;
 use vstd::prelude::*;
@@ -201,6 +202,33 @@ fn check_gpr_timing(
     }
 }
 
+fn check_bus_slot_conflicts(
+    layout: &ProcessorLayout,
+    cpu_id: usize,
+    bidx: usize,
+    bundle: &Bundle,
+    issue_cycle: u64,
+    diags: &mut Vec<Diagnostic>,
+) {
+    for (slot, syl) in bundle.syllables.iter().enumerate() {
+        if is_memory_opcode(syl.opcode)
+            && !bus_slot(issue_cycle, cpu_id, layout.topology.cpus)
+        {
+            diags.push(Diagnostic {
+                bundle_idx: bidx,
+                slot,
+                rule: Rule::BusSlotConflict,
+                message: format!(
+                    "bundle {bidx} slot {slot}: `{}` issues on cycle {issue_cycle}, \
+                     but bus owner is CPU {} and this program is CPU {cpu_id}",
+                    opcode_name(syl.opcode),
+                    bus_owner(issue_cycle, layout.topology.cpus)
+                ),
+            });
+        }
+    }
+}
+
 fn update_ready_at(
     layout: &ProcessorLayout,
     bundle: &Bundle,
@@ -213,7 +241,11 @@ fn update_ready_at(
         if let Some(dst) = gpr_write_dst(syl.opcode, syl.dst) {
             if dst > 0 && dst < ready_at.len() {
                 let lat = if is_load_opcode_for_timing(syl.opcode) {
-                    layout.cache.worst_case_load_latency()
+                    system_worst_case_load_latency(
+                        layout.topology.cpus,
+                        1,
+                        layout.cache.worst_case_load_latency(),
+                    )
                 } else {
                     latencies.get(syl.opcode)
                 } as u64;
@@ -308,6 +340,8 @@ pub enum Rule {
     SameBundlePredHazard,
     /// Rule 6: a GPR source register is not yet ready when this bundle issues (stall-free timing).
     GprReadyCycle,
+    /// A memory syllable is scheduled on a cycle not owned by this CPU's bus slot.
+    BusSlotConflict,
 }
 
 /// A single violation found by the verifier.
@@ -464,6 +498,17 @@ pub fn verify_program(
     program: &[Bundle],
     latencies: &LatencyTable,
 ) -> (ret: Vec<Diagnostic>)
+{
+    verify_program_for_cpu(layout, program, latencies, 0)
+}
+
+#[verifier::external_body]
+pub fn verify_program_for_cpu(
+    layout: &ProcessorLayout,
+    program: &[Bundle],
+    latencies: &LatencyTable,
+    cpu_id: usize,
+) -> (ret: Vec<Diagnostic>)
     ensures
         ret.len() == 0 ==> forall|k: int| 0 <= k < program.len() ==>
             #[trigger] spec_bundle_slot_ok(layout, &program[k]) &&
@@ -479,6 +524,7 @@ pub fn verify_program(
         check_gpr_hazards(layout, bidx, bundle, &mut diags);
         check_pred_hazards(layout, bidx, bundle, &mut diags);
         check_gpr_timing(layout, bidx, bundle, issue_cycle, &ready_at, &mut diags);
+        check_bus_slot_conflicts(layout, cpu_id, bidx, bundle, issue_cycle, &mut diags);
         update_ready_at(layout, bundle, issue_cycle, latencies, &mut ready_at);
     }
 

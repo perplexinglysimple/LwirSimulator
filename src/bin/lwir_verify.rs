@@ -65,6 +65,7 @@ fn main() -> ExitCode {
             Rule::SameBundleGprWaw => "same-bundle-gpr-waw",
             Rule::SameBundlePredHazard => "same-bundle-pred-hazard",
             Rule::GprReadyCycle => "gpr-ready-cycle",
+            Rule::BusSlotConflict => "bus-slot-conflict",
         };
         println!("[{rule_tag}] {}", d.message);
     }

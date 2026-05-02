@@ -3,7 +3,7 @@ use lwir_simulator::bundle::Bundle;
 use lwir_simulator::isa::{Opcode, Syllable};
 use lwir_simulator::latency::LatencyTable;
 use lwir_simulator::layout::canonical_layout;
-use lwir_simulator::verifier::{verify_program, Diagnostic, Rule};
+use lwir_simulator::verifier::{verify_program, verify_program_for_cpu, Diagnostic, Rule};
 
 const W: usize = 4;
 
@@ -545,6 +545,97 @@ fn verifier_uses_cache_worst_case_for_load_timing() {
         diags.iter().any(|diag| diag.message.contains("not ready until cycle 10")),
         "{diags:?}"
     );
+}
+
+#[test]
+fn verifier_uses_system_worst_case_load_latency() {
+    let source = r#"
+.processor {
+  width 4
+
+  hardware {
+    unit alu = integer_alu
+    unit mem = memory
+    unit ctrl = control
+    unit mul = multiplier
+  }
+
+  layout slots {
+    0 = { alu }
+    1 = { alu }
+    2 = { mem }
+    3 = { ctrl, mul }
+  }
+
+  cache {
+    l1d {
+      line_bytes 64
+      capacity 64
+      associativity 1
+      write_policy write_back
+      hit_latency 1
+      miss_latency 4
+      writeback_latency 5
+    }
+  }
+  topology { cpus 3 }
+}
+
+{
+  i0: nop
+  i1: nop
+  m : ldd r1, [r0 + 0]
+  x : nop
+}
+
+{
+  i0: nop
+  i1: nop
+  m : nop
+  x : nop
+}
+
+{
+  i0: add r2, r1, r0
+  i1: nop
+  m : nop
+  x : ret
+}
+"#;
+    let program = parse_program(source).unwrap();
+    let diags = verify_program_for_cpu(&program.layout, &program.bundles, &LatencyTable::default(), 0);
+
+    assert!(has_rule(&diags, Rule::GprReadyCycle), "{diags:?}");
+    assert!(
+        diags.iter().any(|diag| diag.message.contains("not ready until cycle 12")),
+        "{diags:?}"
+    );
+}
+
+#[test]
+fn verifier_rejects_memory_op_outside_cpu_bus_slot() {
+    let mut layout = canonical_layout(W);
+    layout.topology.cpus = 2;
+
+    let mut b0 = nop_bundle();
+    b0.set_slot(2, store_d(0, 1, 0));
+    let program = vec![b0];
+
+    let diags = verify_program_for_cpu(&layout, &program, &LatencyTable::default(), 1);
+    assert!(has_rule(&diags, Rule::BusSlotConflict), "{diags:?}");
+}
+
+#[test]
+fn verifier_accepts_memory_op_inside_cpu_bus_slot() {
+    let mut layout = canonical_layout(W);
+    layout.topology.cpus = 2;
+
+    let mut b0 = nop_bundle();
+    b0.set_slot(2, store_d(0, 1, 0));
+    let program = vec![b0];
+
+    let diags = verify_program_for_cpu(&layout, &program, &LatencyTable::default(), 0);
+    assert!(!has_rule(&diags, Rule::BusSlotConflict), "{diags:?}");
 }
 
 #[test]
