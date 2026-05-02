@@ -201,7 +201,7 @@ impl CpuState {
             self.execute_syllable(syl);
 
             if let Some(register) = gpr_write_dst_for_trace(syl) {
-                if register > 0 && register < NUM_GPRS {
+                if register > 0 && register < self.num_gprs {
                     gpr_writes.push(TraceGprWrite {
                         slot,
                         register,
@@ -213,7 +213,7 @@ impl CpuState {
 
             if syl.opcode.writes_pred() {
                 if let Some(predicate) = syl.dst {
-                    if predicate > 0 && predicate < NUM_PREDS {
+                    if predicate > 0 && predicate < self.num_preds {
                         pred_writes.push(TracePredWrite {
                             slot,
                             predicate,
@@ -266,7 +266,7 @@ impl CpuState {
             for src in syl.src {
                 if let Some(register) = src {
                     if register > 0
-                        && register < NUM_GPRS
+                        && register < self.num_gprs
                         && self.scoreboard[register].ready_cycle > needed_cycle
                     {
                         stalls.push(TraceStall {
@@ -296,7 +296,7 @@ impl CpuState {
         let width_bytes = memory_width_bytes(syl.opcode)?;
         let base = self.read_src_gpr(syl.src[0]);
         let address = base.wrapping_add(syl.imm as u64) as usize;
-        let in_bounds = memory_access_in_bounds(address, width_bytes);
+        let in_bounds = memory_access_in_bounds(self.mem_size, address, width_bytes);
 
         if is_load_opcode(syl.opcode) {
             let value = match width_bytes {
@@ -540,8 +540,8 @@ fn is_load_opcode(opcode: Opcode) -> bool {
     )
 }
 
-fn memory_access_in_bounds(address: usize, width_bytes: usize) -> bool {
-    width_bytes <= MEM_SIZE && address <= MEM_SIZE - width_bytes
+fn memory_access_in_bounds(mem_size: usize, address: usize, width_bytes: usize) -> bool {
+    width_bytes <= mem_size && address <= mem_size - width_bytes
 }
 
 fn mask_to_width(value: u64, width_bytes: usize) -> u64 {
@@ -618,6 +618,12 @@ fn opcode_mnemonic(op: Opcode) -> &'static str {
         Opcode::POr => "por",
         Opcode::PXor => "pxor",
         Opcode::PNot => "pnot",
+        Opcode::FpAdd32 => "fpadd32",
+        Opcode::FpMul32 => "fpmul32",
+        Opcode::FpAdd64 => "fpadd64",
+        Opcode::FpMul64 => "fpmul64",
+        Opcode::AesEnc => "aesenc",
+        Opcode::AesDec => "aesdec",
         Opcode::Nop => "nop",
     }
 }

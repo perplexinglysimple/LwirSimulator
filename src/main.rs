@@ -58,7 +58,7 @@ fn main() -> ExitCode {
 
     let mut latencies = LatencyTable::default();
     latencies.set(Opcode::Mul, 5);
-    let mut cpu = CpuState::new(program.layout.width, latencies);
+    let mut cpu = CpuState::new_for_layout(&program.layout, latencies);
 
     if trace {
         let trace = cpu.trace_program(&program.layout, &program.bundles);

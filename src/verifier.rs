@@ -9,10 +9,10 @@
 /// spec implies the corresponding runtime pairwise condition for any pair of
 /// syllables that are both active in a given CPU state.
 use crate::bundle::Bundle;
-use crate::cpu::{CpuState, NUM_GPRS, NUM_PREDS};
+use crate::cpu::CpuState;
 use crate::isa::Opcode;
-use crate::layout::ProcessorLayout;
 use crate::latency::LatencyTable;
+use crate::layout::ProcessorLayout;
 use builtin::*;
 use builtin_macros::*;
 use vstd::prelude::*;
@@ -46,14 +46,19 @@ fn check_slot_legality(
     }
 }
 
-fn check_gpr_hazards(bidx: usize, bundle: &Bundle, diags: &mut Vec<Diagnostic>) {
+fn check_gpr_hazards(
+    layout: &ProcessorLayout,
+    bidx: usize,
+    bundle: &Bundle,
+    diags: &mut Vec<Diagnostic>,
+) {
     let n = bundle.syllables.len();
     for i in 0..n {
         let ei = &bundle.syllables[i];
         let Some(dst) = gpr_write_dst(ei.opcode, ei.dst) else {
             continue;
         };
-        if dst == 0 || dst >= NUM_GPRS {
+        if dst == 0 || dst >= layout.arch.gprs {
             continue;
         }
         for j in (i + 1)..n {
@@ -101,6 +106,7 @@ fn check_gpr_hazards(bidx: usize, bundle: &Bundle, diags: &mut Vec<Diagnostic>) 
 }
 
 fn check_pred_hazards(
+    layout: &ProcessorLayout,
     bidx: usize,
     bundle: &Bundle,
     diags: &mut Vec<Diagnostic>,
@@ -114,7 +120,7 @@ fn check_pred_hazards(
         let Some(dst) = ei.dst else {
             continue;
         };
-        if dst == 0 || dst >= NUM_PREDS {
+        if dst == 0 || dst >= layout.arch.preds {
             continue;
         }
         for j in (i + 1)..n {
@@ -152,6 +158,7 @@ fn check_pred_hazards(
 }
 
 fn check_gpr_timing(
+    layout: &ProcessorLayout,
     bidx: usize,
     bundle: &Bundle,
     issue_cycle: u64,
@@ -162,7 +169,7 @@ fn check_gpr_timing(
     for (slot, syl) in bundle.syllables.iter().enumerate() {
         for src_opt in &syl.src {
             if let Some(r) = *src_opt {
-                if r > 0 && r < NUM_GPRS && ready_at[r] > next_cycle {
+                if r > 0 && r < layout.arch.gprs && ready_at[r] > next_cycle {
                     diags.push(Diagnostic {
                         bundle_idx: bidx,
                         slot,
@@ -203,7 +210,7 @@ fn update_ready_at(
     let write_cycle = issue_cycle + 1;
     for syl in &bundle.syllables {
         if let Some(dst) = gpr_write_dst(syl.opcode, syl.dst) {
-            if dst > 0 && dst < NUM_GPRS {
+            if dst > 0 && dst < ready_at.len() {
                 let lat = latencies.get(syl.opcode) as u64;
                 let new_ready = write_cycle + lat;
                 if new_ready > ready_at[dst] {
@@ -259,6 +266,12 @@ fn opcode_name(op: Opcode) -> &'static str {
         Opcode::POr => "por",
         Opcode::PXor => "pxor",
         Opcode::PNot => "pnot",
+        Opcode::FpAdd32 => "fpadd32",
+        Opcode::FpMul32 => "fpmul32",
+        Opcode::FpAdd64 => "fpadd64",
+        Opcode::FpMul64 => "fpmul64",
+        Opcode::AesEnc => "aesenc",
+        Opcode::AesDec => "aesdec",
         Opcode::Nop => "nop",
     }
 }
@@ -317,10 +330,10 @@ pub open spec fn spec_bundle_slot_ok(layout: &ProcessorLayout, bundle: &Bundle) 
         #[trigger] spec_slot_ok_in(layout, bundle, slot)
 }
 
-pub open spec fn spec_gpr_pair_ok_in(bundle: &Bundle, i: int, j: int) -> bool {
+pub open spec fn spec_gpr_pair_ok_in(layout: &ProcessorLayout, bundle: &Bundle, i: int, j: int) -> bool {
     match crate::cpu::spec_gpr_write_dst(bundle.syllables[i].opcode, bundle.syllables[i].dst) {
         None      => true,
-        Some(dst) => dst == 0 || dst >= NUM_GPRS || (
+        Some(dst) => dst == 0 || dst >= layout.arch.gprs || (
             bundle.syllables[j].src[0] != Some(dst) &&
             bundle.syllables[j].src[1] != Some(dst) &&
             !(bundle.syllables[j].opcode == Opcode::Ret && dst == 31) &&
@@ -336,17 +349,17 @@ pub open spec fn spec_gpr_pair_ok_in(bundle: &Bundle, i: int, j: int) -> bool {
 }
 
 /// A bundle has no same-bundle GPR RAW or WAW hazards under the conservative contract.
-pub open spec fn spec_bundle_gpr_hazard_free(bundle: &Bundle) -> bool {
+pub open spec fn spec_bundle_gpr_hazard_free(layout: &ProcessorLayout, bundle: &Bundle) -> bool {
     forall|i: int, j: int| 0 <= i < j < bundle.syllables.len() ==>
-        #[trigger] spec_gpr_pair_ok_in(bundle, i, j)
+        #[trigger] spec_gpr_pair_ok_in(layout, bundle, i, j)
 }
 
-pub open spec fn spec_pred_pair_ok_in(bundle: &Bundle, i: int, j: int) -> bool {
+pub open spec fn spec_pred_pair_ok_in(layout: &ProcessorLayout, bundle: &Bundle, i: int, j: int) -> bool {
     let ei = bundle.syllables[i];
     let lj = bundle.syllables[j];
     !crate::cpu::spec_opcode_writes_pred(ei.opcode) || match ei.dst {
         None      => true,
-        Some(dst) => dst == 0 || dst >= NUM_PREDS || (
+        Some(dst) => dst == 0 || dst >= layout.arch.preds || (
             !(crate::cpu::spec_opcode_reads_pred_src(lj.opcode) &&
               (lj.src[0] == Some(dst) || lj.src[1] == Some(dst))) &&
             !(lj.opcode == Opcode::Branch && lj.predicate == dst) &&
@@ -356,9 +369,9 @@ pub open spec fn spec_pred_pair_ok_in(bundle: &Bundle, i: int, j: int) -> bool {
 }
 
 /// A bundle has no same-bundle predicate hazards under the conservative contract.
-pub open spec fn spec_bundle_pred_hazard_free(bundle: &Bundle) -> bool {
+pub open spec fn spec_bundle_pred_hazard_free(layout: &ProcessorLayout, bundle: &Bundle) -> bool {
     forall|i: int, j: int| 0 <= i < j < bundle.syllables.len() ==>
-        #[trigger] spec_pred_pair_ok_in(bundle, i, j)
+        #[trigger] spec_pred_pair_ok_in(layout, bundle, i, j)
 }
 
 // --- Soundness lemmas (machine-checked by Verus/Z3) ---
@@ -389,6 +402,7 @@ pub proof fn lemma_slot_ok_implies_active_slot_legal(
 
 /// GPR-hazard conservatism: unconditional hazard-free implies active-pair hazard-free.
 pub proof fn lemma_gpr_hazard_free_implies_active_pair_ok(
+    layout: &ProcessorLayout,
     bundle: &Bundle,
     cpu: &CpuState,
     i: int,
@@ -400,15 +414,16 @@ pub proof fn lemma_gpr_hazard_free_implies_active_pair_ok(
         j < bundle.syllables.len(),
         crate::cpu::spec_syl_active(cpu, &bundle.syllables[i]),
         crate::cpu::spec_syl_active(cpu, &bundle.syllables[j]),
-        spec_bundle_gpr_hazard_free(bundle),
+        spec_bundle_gpr_hazard_free(layout, bundle),
     ensures
-        spec_gpr_pair_ok_in(bundle, i, j),
+        spec_gpr_pair_ok_in(layout, bundle, i, j),
 {
-    assert(spec_gpr_pair_ok_in(bundle, i, j));
+    assert(spec_gpr_pair_ok_in(layout, bundle, i, j));
 }
 
 /// Predicate-hazard conservatism: unconditional pred-hazard-free implies active-pair pred-hazard-free.
 pub proof fn lemma_pred_hazard_free_implies_active_pair_ok(
+    layout: &ProcessorLayout,
     bundle: &Bundle,
     cpu: &CpuState,
     i: int,
@@ -420,11 +435,11 @@ pub proof fn lemma_pred_hazard_free_implies_active_pair_ok(
         j < bundle.syllables.len(),
         crate::cpu::spec_syl_active(cpu, &bundle.syllables[i]),
         crate::cpu::spec_syl_active(cpu, &bundle.syllables[j]),
-        spec_bundle_pred_hazard_free(bundle),
+        spec_bundle_pred_hazard_free(layout, bundle),
     ensures
-        spec_pred_pair_ok_in(bundle, i, j),
+        spec_pred_pair_ok_in(layout, bundle, i, j),
 {
-    assert(spec_pred_pair_ok_in(bundle, i, j));
+    assert(spec_pred_pair_ok_in(layout, bundle, i, j));
 }
 
 // --- Public entry point ---
@@ -443,18 +458,18 @@ pub fn verify_program(
     ensures
         ret.len() == 0 ==> forall|k: int| 0 <= k < program.len() ==>
             #[trigger] spec_bundle_slot_ok(layout, &program[k]) &&
-            spec_bundle_gpr_hazard_free(&program[k]) &&
-            spec_bundle_pred_hazard_free(&program[k]),
+            spec_bundle_gpr_hazard_free(layout, &program[k]) &&
+            spec_bundle_pred_hazard_free(layout, &program[k]),
 {
     let mut diags = Vec::new();
-    let mut ready_at = vec![0u64; NUM_GPRS];
+    let mut ready_at = vec![0u64; layout.arch.gprs];
 
     for (bidx, bundle) in program.iter().enumerate() {
         let issue_cycle = bidx as u64;
         check_slot_legality(layout, bidx, bundle, &mut diags);
-        check_gpr_hazards(bidx, bundle, &mut diags);
-        check_pred_hazards(bidx, bundle, &mut diags);
-        check_gpr_timing(bidx, bundle, issue_cycle, &ready_at, &mut diags);
+        check_gpr_hazards(layout, bidx, bundle, &mut diags);
+        check_pred_hazards(layout, bidx, bundle, &mut diags);
+        check_gpr_timing(layout, bidx, bundle, issue_cycle, &ready_at, &mut diags);
         update_ready_at(bundle, issue_cycle, latencies, &mut ready_at);
     }
 

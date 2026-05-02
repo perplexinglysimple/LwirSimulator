@@ -15,17 +15,21 @@ impl CpuState {
             self.pc     == old(self).pc,
             self.cycle  == old(self).cycle,
             self.halted == old(self).halted,
+            self.width      == old(self).width,
+            self.num_gprs   == old(self).num_gprs,
+            self.num_preds  == old(self).num_preds,
+            self.mem_size   == old(self).mem_size,
             syl.dst.is_none() ==>
-                forall|i: int| 0 <= i < NUM_GPRS ==> self.gprs[i] == old(self).gprs[i],
-            syl.dst.is_some() && syl.dst.unwrap() > 0 && syl.dst.unwrap() < NUM_GPRS ==>
+                forall|i: int| 0 <= i < self.num_gprs ==> self.gprs[i] == old(self).gprs[i],
+            syl.dst.is_some() && syl.dst.unwrap() > 0 && syl.dst.unwrap() < self.num_gprs ==>
                 self.gprs[syl.dst.unwrap() as int] == val,
-            syl.dst.is_some() && syl.dst.unwrap() > 0 && syl.dst.unwrap() < NUM_GPRS ==>
-                forall|i: int| 0 <= i < NUM_GPRS && i != syl.dst.unwrap() ==>
+            syl.dst.is_some() && syl.dst.unwrap() > 0 && syl.dst.unwrap() < self.num_gprs ==>
+                forall|i: int| 0 <= i < self.num_gprs && i != syl.dst.unwrap() ==>
                     self.gprs[i] == old(self).gprs[i],
     {
         if let Some(dst) = syl.dst {
             self.write_gpr(dst, val);
-            if dst < NUM_GPRS {
+            if dst < self.num_gprs {
                 self.scoreboard.set(dst, ScoreboardEntry {
                     ready_cycle: self.cycle.wrapping_add(latency as u64),
                 });
@@ -45,41 +49,41 @@ impl CpuState {
             self.memory == old(self).memory,
             self.pc     == old(self).pc,
             self.halted == old(self).halted,
-            syl.dst.is_some() && syl.dst.unwrap() > 0 && syl.dst.unwrap() < NUM_GPRS ==>
-                forall|i: int| 0 <= i < NUM_GPRS && i != syl.dst.unwrap() ==>
+            syl.dst.is_some() && syl.dst.unwrap() > 0 && syl.dst.unwrap() < self.num_gprs ==>
+                forall|i: int| 0 <= i < self.num_gprs && i != syl.dst.unwrap() ==>
                     #[trigger] self.gprs[i] == old(self).gprs[i],
             syl.opcode == Opcode::Add &&
-                syl.dst.is_some() && syl.dst.unwrap() > 0 && syl.dst.unwrap() < NUM_GPRS ==>
+                syl.dst.is_some() && syl.dst.unwrap() > 0 && syl.dst.unwrap() < self.num_gprs ==>
                 self.gprs[syl.dst.unwrap() as int] ==
                     spec_src(old(self), syl.src[0]).wrapping_add(spec_src(old(self), syl.src[1])),
             syl.opcode == Opcode::Sub &&
-                syl.dst.is_some() && syl.dst.unwrap() > 0 && syl.dst.unwrap() < NUM_GPRS ==>
+                syl.dst.is_some() && syl.dst.unwrap() > 0 && syl.dst.unwrap() < self.num_gprs ==>
                 self.gprs[syl.dst.unwrap() as int] ==
                     spec_src(old(self), syl.src[0]).wrapping_sub(spec_src(old(self), syl.src[1])),
             syl.opcode == Opcode::And &&
-                syl.dst.is_some() && syl.dst.unwrap() > 0 && syl.dst.unwrap() < NUM_GPRS ==>
+                syl.dst.is_some() && syl.dst.unwrap() > 0 && syl.dst.unwrap() < self.num_gprs ==>
                 self.gprs[syl.dst.unwrap() as int] ==
                     spec_src(old(self), syl.src[0]) & spec_src(old(self), syl.src[1]),
             syl.opcode == Opcode::Or &&
-                syl.dst.is_some() && syl.dst.unwrap() > 0 && syl.dst.unwrap() < NUM_GPRS ==>
+                syl.dst.is_some() && syl.dst.unwrap() > 0 && syl.dst.unwrap() < self.num_gprs ==>
                 self.gprs[syl.dst.unwrap() as int] ==
                     spec_src(old(self), syl.src[0]) | spec_src(old(self), syl.src[1]),
             syl.opcode == Opcode::Xor &&
-                syl.dst.is_some() && syl.dst.unwrap() > 0 && syl.dst.unwrap() < NUM_GPRS ==>
+                syl.dst.is_some() && syl.dst.unwrap() > 0 && syl.dst.unwrap() < self.num_gprs ==>
                 self.gprs[syl.dst.unwrap() as int] ==
                     spec_src(old(self), syl.src[0]) ^ spec_src(old(self), syl.src[1]),
             syl.opcode == Opcode::Mov &&
-                syl.dst.is_some() && syl.dst.unwrap() > 0 && syl.dst.unwrap() < NUM_GPRS ==>
+                syl.dst.is_some() && syl.dst.unwrap() > 0 && syl.dst.unwrap() < self.num_gprs ==>
                 self.gprs[syl.dst.unwrap() as int] == spec_src(old(self), syl.src[0]),
             syl.opcode == Opcode::MovImm &&
-                syl.dst.is_some() && syl.dst.unwrap() > 0 && syl.dst.unwrap() < NUM_GPRS ==>
+                syl.dst.is_some() && syl.dst.unwrap() > 0 && syl.dst.unwrap() < self.num_gprs ==>
                 self.gprs[syl.dst.unwrap() as int] == syl.imm as u64,
             syl.opcode == Opcode::Mul &&
-                syl.dst.is_some() && syl.dst.unwrap() > 0 && syl.dst.unwrap() < NUM_GPRS ==>
+                syl.dst.is_some() && syl.dst.unwrap() > 0 && syl.dst.unwrap() < self.num_gprs ==>
                 self.gprs[syl.dst.unwrap() as int] ==
                     spec_src(old(self), syl.src[0]).wrapping_mul(spec_src(old(self), syl.src[1])),
             syl.opcode == Opcode::Lea &&
-                syl.dst.is_some() && syl.dst.unwrap() > 0 && syl.dst.unwrap() < NUM_GPRS ==>
+                syl.dst.is_some() && syl.dst.unwrap() > 0 && syl.dst.unwrap() < self.num_gprs ==>
                 self.gprs[syl.dst.unwrap() as int] ==
                     spec_src(old(self), syl.src[0]).wrapping_add(syl.imm as u64),
     {
@@ -128,6 +132,18 @@ impl CpuState {
                 self.writeback(syl, v as u64, lat);
             }
             Opcode::Lea     => self.writeback(syl, src0.wrapping_add(imm), lat),
+            Opcode::FpAdd32 => {
+                let v = (src0 as u32).wrapping_add(src1 as u32) as u64;
+                self.writeback(syl, v, lat);
+            }
+            Opcode::FpMul32 => {
+                let v = (src0 as u32).wrapping_mul(src1 as u32) as u64;
+                self.writeback(syl, v, lat);
+            }
+            Opcode::FpAdd64 => self.writeback(syl, src0.wrapping_add(src1), lat),
+            Opcode::FpMul64 => self.writeback(syl, src0.wrapping_mul(src1), lat),
+            Opcode::AesEnc => self.writeback(syl, src0 ^ src1 ^ 0x63u64, lat),
+            Opcode::AesDec => self.writeback(syl, src0 ^ src1 ^ 0x05u64, lat),
             _ => {},
         }
     }
@@ -145,16 +161,16 @@ impl CpuState {
             self.halted     == old(self).halted,
             self.scoreboard == old(self).scoreboard,
             syl.opcode == Opcode::CmpEq &&
-                syl.dst.is_some() && syl.dst.unwrap() > 0 && syl.dst.unwrap() < NUM_PREDS ==>
+                syl.dst.is_some() && syl.dst.unwrap() > 0 && syl.dst.unwrap() < self.num_preds ==>
                 self.preds[syl.dst.unwrap() as int] ==
                     (spec_src(old(self), syl.src[0]) == spec_src(old(self), syl.src[1])),
             syl.opcode == Opcode::CmpLt &&
-                syl.dst.is_some() && syl.dst.unwrap() > 0 && syl.dst.unwrap() < NUM_PREDS ==>
+                syl.dst.is_some() && syl.dst.unwrap() > 0 && syl.dst.unwrap() < self.num_preds ==>
                 self.preds[syl.dst.unwrap() as int] ==
                     ((spec_src(old(self), syl.src[0]) as i64) <
                      (spec_src(old(self), syl.src[1]) as i64)),
             syl.opcode == Opcode::CmpUlt &&
-                syl.dst.is_some() && syl.dst.unwrap() > 0 && syl.dst.unwrap() < NUM_PREDS ==>
+                syl.dst.is_some() && syl.dst.unwrap() > 0 && syl.dst.unwrap() < self.num_preds ==>
                 self.preds[syl.dst.unwrap() as int] ==
                     (spec_src(old(self), syl.src[0]) < spec_src(old(self), syl.src[1])),
     {
@@ -182,7 +198,7 @@ impl CpuState {
             self.pc         == old(self).pc,
             self.halted     == old(self).halted,
             self.scoreboard == old(self).scoreboard,
-            syl.opcode == Opcode::StoreD && spec_addr(old(self), syl) + 7 < MEM_SIZE ==>
+            syl.opcode == Opcode::StoreD && spec_addr(old(self), syl) + 7 < self.mem_size ==>
                 self.memory[spec_addr(old(self), syl) as int]     == (spec_src(old(self), syl.src[1]) & 0xffu64) as u8 &&
                 self.memory[spec_addr(old(self), syl) as int + 1] == ((spec_src(old(self), syl.src[1]) >>  8) & 0xffu64) as u8 &&
                 self.memory[spec_addr(old(self), syl) as int + 2] == ((spec_src(old(self), syl.src[1]) >> 16) & 0xffu64) as u8 &&
@@ -220,19 +236,19 @@ impl CpuState {
             self.halted     == old(self).halted,
             self.scoreboard == old(self).scoreboard,
             syl.opcode == Opcode::PAnd &&
-                syl.dst.is_some() && syl.dst.unwrap() > 0 && syl.dst.unwrap() < NUM_PREDS ==>
+                syl.dst.is_some() && syl.dst.unwrap() > 0 && syl.dst.unwrap() < self.num_preds ==>
                 self.preds[syl.dst.unwrap() as int] ==
                     (spec_pred_src(old(self), syl.src[0]) && spec_pred_src(old(self), syl.src[1])),
             syl.opcode == Opcode::POr &&
-                syl.dst.is_some() && syl.dst.unwrap() > 0 && syl.dst.unwrap() < NUM_PREDS ==>
+                syl.dst.is_some() && syl.dst.unwrap() > 0 && syl.dst.unwrap() < self.num_preds ==>
                 self.preds[syl.dst.unwrap() as int] ==
                     (spec_pred_src(old(self), syl.src[0]) || spec_pred_src(old(self), syl.src[1])),
             syl.opcode == Opcode::PXor &&
-                syl.dst.is_some() && syl.dst.unwrap() > 0 && syl.dst.unwrap() < NUM_PREDS ==>
+                syl.dst.is_some() && syl.dst.unwrap() > 0 && syl.dst.unwrap() < self.num_preds ==>
                 self.preds[syl.dst.unwrap() as int] ==
                     (spec_pred_src(old(self), syl.src[0]) ^ spec_pred_src(old(self), syl.src[1])),
             syl.opcode == Opcode::PNot &&
-                syl.dst.is_some() && syl.dst.unwrap() > 0 && syl.dst.unwrap() < NUM_PREDS ==>
+                syl.dst.is_some() && syl.dst.unwrap() > 0 && syl.dst.unwrap() < self.num_preds ==>
                 self.preds[syl.dst.unwrap() as int] == !spec_pred_src(old(self), syl.src[0]),
     {
         match syl.opcode {
@@ -362,53 +378,53 @@ impl CpuState {
                 self.halted == old(self).halted,
 
             spec_syl_active(old(self), syl) && spec_is_gpr_writer(syl.opcode) &&
-                syl.dst.is_some() && syl.dst.unwrap() > 0 && syl.dst.unwrap() < NUM_GPRS ==>
-                forall|i: int| 0 <= i < NUM_GPRS && i != syl.dst.unwrap() ==>
+                syl.dst.is_some() && syl.dst.unwrap() > 0 && syl.dst.unwrap() < self.num_gprs ==>
+                forall|i: int| 0 <= i < self.num_gprs && i != syl.dst.unwrap() ==>
                     #[trigger] self.gprs[i] == old(self).gprs[i],
 
             spec_syl_active(old(self), syl) && syl.opcode == Opcode::Add &&
-                syl.dst.is_some() && syl.dst.unwrap() > 0 && syl.dst.unwrap() < NUM_GPRS ==>
+                syl.dst.is_some() && syl.dst.unwrap() > 0 && syl.dst.unwrap() < self.num_gprs ==>
                 self.gprs[syl.dst.unwrap() as int] ==
                     spec_src(old(self), syl.src[0]).wrapping_add(
                     spec_src(old(self), syl.src[1])),
 
             spec_syl_active(old(self), syl) && syl.opcode == Opcode::Sub &&
-                syl.dst.is_some() && syl.dst.unwrap() > 0 && syl.dst.unwrap() < NUM_GPRS ==>
+                syl.dst.is_some() && syl.dst.unwrap() > 0 && syl.dst.unwrap() < self.num_gprs ==>
                 self.gprs[syl.dst.unwrap() as int] ==
                     spec_src(old(self), syl.src[0]).wrapping_sub(
                     spec_src(old(self), syl.src[1])),
 
             spec_syl_active(old(self), syl) && syl.opcode == Opcode::And &&
-                syl.dst.is_some() && syl.dst.unwrap() > 0 && syl.dst.unwrap() < NUM_GPRS ==>
+                syl.dst.is_some() && syl.dst.unwrap() > 0 && syl.dst.unwrap() < self.num_gprs ==>
                 self.gprs[syl.dst.unwrap() as int] ==
                     spec_src(old(self), syl.src[0]) & spec_src(old(self), syl.src[1]),
 
             spec_syl_active(old(self), syl) && syl.opcode == Opcode::Or &&
-                syl.dst.is_some() && syl.dst.unwrap() > 0 && syl.dst.unwrap() < NUM_GPRS ==>
+                syl.dst.is_some() && syl.dst.unwrap() > 0 && syl.dst.unwrap() < self.num_gprs ==>
                 self.gprs[syl.dst.unwrap() as int] ==
                     spec_src(old(self), syl.src[0]) | spec_src(old(self), syl.src[1]),
 
             spec_syl_active(old(self), syl) && syl.opcode == Opcode::Xor &&
-                syl.dst.is_some() && syl.dst.unwrap() > 0 && syl.dst.unwrap() < NUM_GPRS ==>
+                syl.dst.is_some() && syl.dst.unwrap() > 0 && syl.dst.unwrap() < self.num_gprs ==>
                 self.gprs[syl.dst.unwrap() as int] ==
                     spec_src(old(self), syl.src[0]) ^ spec_src(old(self), syl.src[1]),
 
             spec_syl_active(old(self), syl) && syl.opcode == Opcode::Mov &&
-                syl.dst.is_some() && syl.dst.unwrap() > 0 && syl.dst.unwrap() < NUM_GPRS ==>
+                syl.dst.is_some() && syl.dst.unwrap() > 0 && syl.dst.unwrap() < self.num_gprs ==>
                 self.gprs[syl.dst.unwrap() as int] == spec_src(old(self), syl.src[0]),
 
             spec_syl_active(old(self), syl) && syl.opcode == Opcode::MovImm &&
-                syl.dst.is_some() && syl.dst.unwrap() > 0 && syl.dst.unwrap() < NUM_GPRS ==>
+                syl.dst.is_some() && syl.dst.unwrap() > 0 && syl.dst.unwrap() < self.num_gprs ==>
                 self.gprs[syl.dst.unwrap() as int] == syl.imm as u64,
 
             spec_syl_active(old(self), syl) && syl.opcode == Opcode::Mul &&
-                syl.dst.is_some() && syl.dst.unwrap() > 0 && syl.dst.unwrap() < NUM_GPRS ==>
+                syl.dst.is_some() && syl.dst.unwrap() > 0 && syl.dst.unwrap() < self.num_gprs ==>
                 self.gprs[syl.dst.unwrap() as int] ==
                     spec_src(old(self), syl.src[0]).wrapping_mul(
                     spec_src(old(self), syl.src[1])),
 
             spec_syl_active(old(self), syl) && syl.opcode == Opcode::Lea &&
-                syl.dst.is_some() && syl.dst.unwrap() > 0 && syl.dst.unwrap() < NUM_GPRS ==>
+                syl.dst.is_some() && syl.dst.unwrap() > 0 && syl.dst.unwrap() < self.num_gprs ==>
                 self.gprs[syl.dst.unwrap() as int] ==
                     spec_src(old(self), syl.src[0]).wrapping_add(syl.imm as u64),
 
@@ -421,18 +437,18 @@ impl CpuState {
                 self.halted == old(self).halted,
 
             spec_syl_active(old(self), syl) && syl.opcode == Opcode::CmpEq &&
-                syl.dst.is_some() && syl.dst.unwrap() > 0 && syl.dst.unwrap() < NUM_PREDS ==>
+                syl.dst.is_some() && syl.dst.unwrap() > 0 && syl.dst.unwrap() < self.num_preds ==>
                 self.preds[syl.dst.unwrap() as int] ==
                     (spec_src(old(self), syl.src[0]) == spec_src(old(self), syl.src[1])),
 
             spec_syl_active(old(self), syl) && syl.opcode == Opcode::CmpLt &&
-                syl.dst.is_some() && syl.dst.unwrap() > 0 && syl.dst.unwrap() < NUM_PREDS ==>
+                syl.dst.is_some() && syl.dst.unwrap() > 0 && syl.dst.unwrap() < self.num_preds ==>
                 self.preds[syl.dst.unwrap() as int] ==
                     ((spec_src(old(self), syl.src[0]) as i64) <
                      (spec_src(old(self), syl.src[1]) as i64)),
 
             spec_syl_active(old(self), syl) && syl.opcode == Opcode::CmpUlt &&
-                syl.dst.is_some() && syl.dst.unwrap() > 0 && syl.dst.unwrap() < NUM_PREDS ==>
+                syl.dst.is_some() && syl.dst.unwrap() > 0 && syl.dst.unwrap() < self.num_preds ==>
                 self.preds[syl.dst.unwrap() as int] ==
                     (spec_src(old(self), syl.src[0]) < spec_src(old(self), syl.src[1])),
 
@@ -443,7 +459,7 @@ impl CpuState {
                 self.halted == old(self).halted,
 
             spec_syl_active(old(self), syl) && syl.opcode == Opcode::StoreD &&
-                spec_addr(old(self), syl) + 7 < MEM_SIZE ==>
+                spec_addr(old(self), syl) + 7 < self.mem_size ==>
                 self.memory[spec_addr(old(self), syl) as int]     == (spec_src(old(self), syl.src[1]) & 0xffu64) as u8 &&
                 self.memory[spec_addr(old(self), syl) as int + 1] == ((spec_src(old(self), syl.src[1]) >>  8) & 0xffu64) as u8 &&
                 self.memory[spec_addr(old(self), syl) as int + 2] == ((spec_src(old(self), syl.src[1]) >> 16) & 0xffu64) as u8 &&
@@ -462,22 +478,22 @@ impl CpuState {
                 self.halted == old(self).halted,
 
             spec_syl_active(old(self), syl) && syl.opcode == Opcode::PAnd &&
-                syl.dst.is_some() && syl.dst.unwrap() > 0 && syl.dst.unwrap() < NUM_PREDS ==>
+                syl.dst.is_some() && syl.dst.unwrap() > 0 && syl.dst.unwrap() < self.num_preds ==>
                 self.preds[syl.dst.unwrap() as int] ==
                     (spec_pred_src(old(self), syl.src[0]) && spec_pred_src(old(self), syl.src[1])),
 
             spec_syl_active(old(self), syl) && syl.opcode == Opcode::POr &&
-                syl.dst.is_some() && syl.dst.unwrap() > 0 && syl.dst.unwrap() < NUM_PREDS ==>
+                syl.dst.is_some() && syl.dst.unwrap() > 0 && syl.dst.unwrap() < self.num_preds ==>
                 self.preds[syl.dst.unwrap() as int] ==
                     (spec_pred_src(old(self), syl.src[0]) || spec_pred_src(old(self), syl.src[1])),
 
             spec_syl_active(old(self), syl) && syl.opcode == Opcode::PXor &&
-                syl.dst.is_some() && syl.dst.unwrap() > 0 && syl.dst.unwrap() < NUM_PREDS ==>
+                syl.dst.is_some() && syl.dst.unwrap() > 0 && syl.dst.unwrap() < self.num_preds ==>
                 self.preds[syl.dst.unwrap() as int] ==
                     (spec_pred_src(old(self), syl.src[0]) ^ spec_pred_src(old(self), syl.src[1])),
 
             spec_syl_active(old(self), syl) && syl.opcode == Opcode::PNot &&
-                syl.dst.is_some() && syl.dst.unwrap() > 0 && syl.dst.unwrap() < NUM_PREDS ==>
+                syl.dst.is_some() && syl.dst.unwrap() > 0 && syl.dst.unwrap() < self.num_preds ==>
                 self.preds[syl.dst.unwrap() as int] == !spec_pred_src(old(self), syl.src[0]),
 
             spec_syl_active(old(self), syl) && syl.opcode == Opcode::Branch ==>
@@ -529,7 +545,9 @@ impl CpuState {
             Opcode::Add | Opcode::Sub | Opcode::And | Opcode::Or | Opcode::Xor |
             Opcode::Shl | Opcode::Srl | Opcode::Sra | Opcode::Mov | Opcode::MovImm |
             Opcode::Mul | Opcode::MulH | Opcode::LoadD | Opcode::LoadW |
-            Opcode::LoadH | Opcode::LoadB | Opcode::Lea => {
+            Opcode::LoadH | Opcode::LoadB | Opcode::Lea |
+            Opcode::FpAdd32 | Opcode::FpMul32 | Opcode::FpAdd64 | Opcode::FpMul64 |
+            Opcode::AesEnc | Opcode::AesDec => {
                 self.exec_gpr_writer(syl, lat);
             }
             Opcode::CmpEq | Opcode::CmpLt | Opcode::CmpUlt => {

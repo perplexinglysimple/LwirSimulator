@@ -2,8 +2,8 @@ use lwir_simulator::asm::parse_program;
 use lwir_simulator::bundle::Bundle;
 use lwir_simulator::cpu::CpuState;
 use lwir_simulator::isa::{Opcode, Syllable};
-use lwir_simulator::layout::{canonical_layout, ProcessorLayout};
 use lwir_simulator::latency::LatencyTable;
+use lwir_simulator::layout::{canonical_layout, ProcessorLayout};
 
 const W: usize = 4;
 
@@ -163,7 +163,11 @@ fn step(cpu: &mut CpuState, program: &Vec<Bundle>) -> bool {
     cpu.step(&layout, program)
 }
 
-fn trace_program(cpu: &mut CpuState, layout: &ProcessorLayout, program: &[Bundle]) -> lwir_simulator::cpu::TraceLog {
+fn trace_program(
+    cpu: &mut CpuState,
+    layout: &ProcessorLayout,
+    program: &[Bundle],
+) -> lwir_simulator::cpu::TraceLog {
     cpu.trace_program(layout, program)
 }
 
@@ -216,6 +220,52 @@ fn register_zero_and_predicate_zero_are_hardwired() {
 }
 
 #[test]
+fn processor_arch_config_sizes_cpu_state() {
+    let source = r#"
+.processor {
+  width 4
+
+  arch { gprs 64 preds 32 memory 131072 }
+
+  hardware {
+    unit alu = integer_alu
+    unit mem = memory
+    unit ctrl = control
+    unit mul = multiplier
+  }
+
+  layout slots {
+    0 = { alu }
+    1 = { alu }
+    2 = { mem }
+    3 = { ctrl, mul }
+  }
+
+  cache { }
+  topology { cpus 1 }
+}
+
+{
+  i0: movi r63, 7
+  i1: nop
+  m : nop
+  x : ret
+}
+"#;
+
+    let program = parse_program(source).unwrap();
+    let cpu = CpuState::new_for_layout(&program.layout, LatencyTable::default());
+
+    assert_eq!(program.layout.arch.gprs, 64);
+    assert_eq!(program.layout.arch.preds, 32);
+    assert_eq!(program.layout.arch.memory_bytes, 131072);
+    assert_eq!(cpu.gprs.len(), 64);
+    assert_eq!(cpu.preds.len(), 32);
+    assert_eq!(cpu.scoreboard.len(), 64);
+    assert_eq!(cpu.memory.len(), 131072);
+}
+
+#[test]
 fn illegal_bundle_wrong_slot_halts_before_execution() {
     let mut cpu = CpuState::new(W, LatencyTable::default());
 
@@ -235,14 +285,17 @@ fn illegal_same_bundle_raw_halts_before_execution() {
 
     let mut bad = Bundle::nop_bundle(W);
     bad.set_slot(0, mov_imm(1, 6));
-    bad.set_slot(1, Syllable {
-        opcode: Opcode::Add,
-        dst: Some(2),
-        src: [Some(1), Some(0)],
-        imm: 0,
-        predicate: 0,
-        pred_negated: false,
-    });
+    bad.set_slot(
+        1,
+        Syllable {
+            opcode: Opcode::Add,
+            dst: Some(2),
+            src: [Some(1), Some(0)],
+            imm: 0,
+            predicate: 0,
+            pred_negated: false,
+        },
+    );
     let program = vec![bad];
 
     assert!(!step(&mut cpu, &program));
@@ -319,34 +372,43 @@ fn shifts_and_load_widths_behave_as_expected() {
     cpu.memory[0x127] = 0x11;
 
     let mut b0 = Bundle::nop_bundle(W);
-    b0.set_slot(0, Syllable {
-        opcode: Opcode::Shl,
-        dst: Some(3),
-        src: [Some(2), Some(2)],
-        imm: 0,
-        predicate: 0,
-        pred_negated: false,
-    });
+    b0.set_slot(
+        0,
+        Syllable {
+            opcode: Opcode::Shl,
+            dst: Some(3),
+            src: [Some(2), Some(2)],
+            imm: 0,
+            predicate: 0,
+            pred_negated: false,
+        },
+    );
 
     let mut b1 = Bundle::nop_bundle(W);
-    b1.set_slot(0, Syllable {
-        opcode: Opcode::Srl,
-        dst: Some(4),
-        src: [Some(1), Some(2)],
-        imm: 0,
-        predicate: 0,
-        pred_negated: false,
-    });
+    b1.set_slot(
+        0,
+        Syllable {
+            opcode: Opcode::Srl,
+            dst: Some(4),
+            src: [Some(1), Some(2)],
+            imm: 0,
+            predicate: 0,
+            pred_negated: false,
+        },
+    );
 
     let mut b2 = Bundle::nop_bundle(W);
-    b2.set_slot(0, Syllable {
-        opcode: Opcode::Sra,
-        dst: Some(5),
-        src: [Some(1), Some(2)],
-        imm: 0,
-        predicate: 0,
-        pred_negated: false,
-    });
+    b2.set_slot(
+        0,
+        Syllable {
+            opcode: Opcode::Sra,
+            dst: Some(5),
+            src: [Some(1), Some(2)],
+            imm: 0,
+            predicate: 0,
+            pred_negated: false,
+        },
+    );
 
     let mut b3 = Bundle::nop_bundle(W);
     b3.set_slot(2, load_b(6, 0, 0x120));
@@ -467,7 +529,10 @@ fn main_binary_requires_program_path() {
 
 #[test]
 fn deterministic_trace_records_scheduler_visible_events() {
-    let source = format!("{}{}", processor_header(W), r#"
+    let source = format!(
+        "{}{}",
+        processor_header(W),
+        r#"
 {
   I0: movi r1, 6
   I1: movi r2, 7
@@ -533,7 +598,8 @@ worker:
   M : ldd r4, [r0 + 0x100]
   X : ret
 }
-"#);
+"#
+    );
 
     let program = parse_program(&source).expect("trace program should parse");
     let mut latencies = LatencyTable::default();
@@ -546,13 +612,31 @@ worker:
     assert!(cpu.halted);
     assert!(rendered.starts_with("trace v1 width=4\n"), "{rendered}");
     assert!(rendered.contains("event kind=stall bundle=2"), "{rendered}");
-    assert!(rendered.contains("gpr slot=3 reg=r3 value=0x000000000000002a"), "{rendered}");
-    assert!(rendered.contains("pred slot=0 reg=p1 value=true"), "{rendered}");
-    assert!(rendered.contains("mem slot=2 kind=store width=8 addr=0x00000100"), "{rendered}");
-    assert!(rendered.contains("mem slot=2 kind=load width=8 addr=0x00000100"), "{rendered}");
-    assert!(rendered.contains("control slot=3 kind=branch pred=p1 taken=true"), "{rendered}");
+    assert!(
+        rendered.contains("gpr slot=3 reg=r3 value=0x000000000000002a"),
+        "{rendered}"
+    );
+    assert!(
+        rendered.contains("pred slot=0 reg=p1 value=true"),
+        "{rendered}"
+    );
+    assert!(
+        rendered.contains("mem slot=2 kind=store width=8 addr=0x00000100"),
+        "{rendered}"
+    );
+    assert!(
+        rendered.contains("mem slot=2 kind=load width=8 addr=0x00000100"),
+        "{rendered}"
+    );
+    assert!(
+        rendered.contains("control slot=3 kind=branch pred=p1 taken=true"),
+        "{rendered}"
+    );
     assert!(rendered.contains("control slot=3 kind=call"), "{rendered}");
-    assert!(rendered.contains("control slot=3 kind=ret target=halt halted=true"), "{rendered}");
+    assert!(
+        rendered.contains("control slot=3 kind=ret target=halt halted=true"),
+        "{rendered}"
+    );
     assert!(rendered.contains("final pc=9"), "{rendered}");
 }
 
@@ -610,6 +694,75 @@ fn latency_table_defaults_and_overrides_are_visible() {
 }
 
 #[test]
+fn fp_and_aes_units_parse_verify_and_execute_placeholders() {
+    let source = r#"
+.processor {
+  width 4
+
+  hardware {
+    unit alu = integer_alu
+    unit mem = memory
+    unit ctrl = control
+    unit mul = multiplier
+    unit fp = fp { variant fp64 latency 6 }
+    unit aes = aes { variant aes_ni latency 4 }
+  }
+
+  layout slots {
+    0 = { alu }
+    1 = { alu }
+    2 = { mem }
+    3 = { fp, aes, ctrl, mul }
+  }
+
+  cache { }
+  topology { cpus 1 }
+}
+
+{
+  i0: movi r1, 10
+  i1: movi r2, 32
+  m : nop
+  x : nop
+}
+
+{
+  i0: nop
+  i1: nop
+  m : nop
+  x : fpadd64 r3, r1, r2
+}
+
+{
+  i0: nop
+  i1: nop
+  m : nop
+  x : aesenc r4, r1, r2
+}
+
+{
+  i0: nop
+  i1: nop
+  m : nop
+  x : ret
+}
+"#;
+
+    let program = parse_program(source).unwrap();
+    assert_eq!(program.layout.units[4].latency, Some(6));
+    assert_eq!(program.layout.units[5].latency, Some(4));
+    assert!(program.layout.slot_can_execute(3, Opcode::FpAdd64));
+    assert!(program.layout.slot_can_execute(3, Opcode::AesEnc));
+
+    let mut cpu = CpuState::new(W, LatencyTable::default());
+    while cpu.step(&program.layout, &program.bundles) {}
+
+    assert!(cpu.halted);
+    assert_eq!(cpu.read_gpr(3), 42);
+    assert_eq!(cpu.read_gpr(4), 10 ^ 32 ^ 0x63);
+}
+
+#[test]
 fn opcode_matrix_covers_remaining_execution_paths() {
     let mut cpu = CpuState::new(W, LatencyTable::default());
     cpu.write_gpr(11, u64::MAX);
@@ -621,178 +774,232 @@ fn opcode_matrix_covers_remaining_execution_paths() {
     b0.set_slot(1, mov_imm(2, 0x0f));
 
     let mut b1 = Bundle::nop_bundle(W);
-    b1.set_slot(0, Syllable {
-        opcode: Opcode::Add,
-        dst: Some(3),
-        src: [Some(1), Some(2)],
-        imm: 0,
-        predicate: 0,
-        pred_negated: false,
-    });
-    b1.set_slot(1, Syllable {
-        opcode: Opcode::Sub,
-        dst: Some(4),
-        src: [Some(1), Some(2)],
-        imm: 0,
-        predicate: 0,
-        pred_negated: false,
-    });
+    b1.set_slot(
+        0,
+        Syllable {
+            opcode: Opcode::Add,
+            dst: Some(3),
+            src: [Some(1), Some(2)],
+            imm: 0,
+            predicate: 0,
+            pred_negated: false,
+        },
+    );
+    b1.set_slot(
+        1,
+        Syllable {
+            opcode: Opcode::Sub,
+            dst: Some(4),
+            src: [Some(1), Some(2)],
+            imm: 0,
+            predicate: 0,
+            pred_negated: false,
+        },
+    );
 
     let mut b2 = Bundle::nop_bundle(W);
-    b2.set_slot(0, Syllable {
-        opcode: Opcode::And,
-        dst: Some(5),
-        src: [Some(1), Some(2)],
-        imm: 0,
-        predicate: 0,
-        pred_negated: false,
-    });
-    b2.set_slot(1, Syllable {
-        opcode: Opcode::Or,
-        dst: Some(6),
-        src: [Some(1), Some(2)],
-        imm: 0,
-        predicate: 0,
-        pred_negated: false,
-    });
+    b2.set_slot(
+        0,
+        Syllable {
+            opcode: Opcode::And,
+            dst: Some(5),
+            src: [Some(1), Some(2)],
+            imm: 0,
+            predicate: 0,
+            pred_negated: false,
+        },
+    );
+    b2.set_slot(
+        1,
+        Syllable {
+            opcode: Opcode::Or,
+            dst: Some(6),
+            src: [Some(1), Some(2)],
+            imm: 0,
+            predicate: 0,
+            pred_negated: false,
+        },
+    );
 
     let mut b3 = Bundle::nop_bundle(W);
-    b3.set_slot(0, Syllable {
-        opcode: Opcode::Xor,
-        dst: Some(7),
-        src: [Some(1), Some(2)],
-        imm: 0,
-        predicate: 0,
-        pred_negated: false,
-    });
-    b3.set_slot(1, Syllable {
-        opcode: Opcode::Mov,
-        dst: Some(8),
-        src: [Some(1), None],
-        imm: 0,
-        predicate: 0,
-        pred_negated: false,
-    });
+    b3.set_slot(
+        0,
+        Syllable {
+            opcode: Opcode::Xor,
+            dst: Some(7),
+            src: [Some(1), Some(2)],
+            imm: 0,
+            predicate: 0,
+            pred_negated: false,
+        },
+    );
+    b3.set_slot(
+        1,
+        Syllable {
+            opcode: Opcode::Mov,
+            dst: Some(8),
+            src: [Some(1), None],
+            imm: 0,
+            predicate: 0,
+            pred_negated: false,
+        },
+    );
 
     let mut b4 = Bundle::nop_bundle(W);
-    b4.set_slot(2, Syllable {
-        opcode: Opcode::Lea,
-        dst: Some(9),
-        src: [Some(0), None],
-        imm: 0x200,
-        predicate: 0,
-        pred_negated: false,
-    });
+    b4.set_slot(
+        2,
+        Syllable {
+            opcode: Opcode::Lea,
+            dst: Some(9),
+            src: [Some(0), None],
+            imm: 0x200,
+            predicate: 0,
+            pred_negated: false,
+        },
+    );
 
     let mut b5 = Bundle::nop_bundle(W);
-    b5.set_slot(2, Syllable {
-        opcode: Opcode::Prefetch,
-        dst: None,
-        src: [Some(9), None],
-        imm: 0,
-        predicate: 0,
-        pred_negated: false,
-    });
+    b5.set_slot(
+        2,
+        Syllable {
+            opcode: Opcode::Prefetch,
+            dst: None,
+            src: [Some(9), None],
+            imm: 0,
+            predicate: 0,
+            pred_negated: false,
+        },
+    );
 
     let mut b6 = Bundle::nop_bundle(W);
-    b6.set_slot(3, Syllable {
-        opcode: Opcode::MulH,
-        dst: Some(10),
-        src: [Some(11), Some(12)],
-        imm: 0,
-        predicate: 0,
-        pred_negated: false,
-    });
+    b6.set_slot(
+        3,
+        Syllable {
+            opcode: Opcode::MulH,
+            dst: Some(10),
+            src: [Some(11), Some(12)],
+            imm: 0,
+            predicate: 0,
+            pred_negated: false,
+        },
+    );
 
     let mut b7 = Bundle::nop_bundle(W);
-    b7.set_slot(2, Syllable {
-        opcode: Opcode::StoreB,
-        dst: None,
-        src: [Some(9), Some(13)],
-        imm: 0,
-        predicate: 0,
-        pred_negated: false,
-    });
+    b7.set_slot(
+        2,
+        Syllable {
+            opcode: Opcode::StoreB,
+            dst: None,
+            src: [Some(9), Some(13)],
+            imm: 0,
+            predicate: 0,
+            pred_negated: false,
+        },
+    );
 
     let mut b8 = Bundle::nop_bundle(W);
-    b8.set_slot(2, Syllable {
-        opcode: Opcode::StoreH,
-        dst: None,
-        src: [Some(9), Some(13)],
-        imm: 2,
-        predicate: 0,
-        pred_negated: false,
-    });
+    b8.set_slot(
+        2,
+        Syllable {
+            opcode: Opcode::StoreH,
+            dst: None,
+            src: [Some(9), Some(13)],
+            imm: 2,
+            predicate: 0,
+            pred_negated: false,
+        },
+    );
 
     let mut b9 = Bundle::nop_bundle(W);
-    b9.set_slot(2, Syllable {
-        opcode: Opcode::StoreW,
-        dst: None,
-        src: [Some(9), Some(13)],
-        imm: 8,
-        predicate: 0,
-        pred_negated: false,
-    });
+    b9.set_slot(
+        2,
+        Syllable {
+            opcode: Opcode::StoreW,
+            dst: None,
+            src: [Some(9), Some(13)],
+            imm: 8,
+            predicate: 0,
+            pred_negated: false,
+        },
+    );
 
     let mut b10 = Bundle::nop_bundle(W);
-    b10.set_slot(0, Syllable {
-        opcode: Opcode::CmpEq,
-        dst: Some(1),
-        src: [Some(1), Some(8)],
-        imm: 0,
-        predicate: 0,
-        pred_negated: false,
-    });
+    b10.set_slot(
+        0,
+        Syllable {
+            opcode: Opcode::CmpEq,
+            dst: Some(1),
+            src: [Some(1), Some(8)],
+            imm: 0,
+            predicate: 0,
+            pred_negated: false,
+        },
+    );
 
     let mut b11 = Bundle::nop_bundle(W);
-    b11.set_slot(0, Syllable {
-        opcode: Opcode::CmpUlt,
-        dst: Some(2),
-        src: [Some(2), Some(1)],
-        imm: 0,
-        predicate: 0,
-        pred_negated: false,
-    });
+    b11.set_slot(
+        0,
+        Syllable {
+            opcode: Opcode::CmpUlt,
+            dst: Some(2),
+            src: [Some(2), Some(1)],
+            imm: 0,
+            predicate: 0,
+            pred_negated: false,
+        },
+    );
 
     let mut b12 = Bundle::nop_bundle(W);
-    b12.set_slot(3, Syllable {
-        opcode: Opcode::PAnd,
-        dst: Some(3),
-        src: [Some(1), Some(2)],
-        imm: 0,
-        predicate: 0,
-        pred_negated: false,
-    });
+    b12.set_slot(
+        3,
+        Syllable {
+            opcode: Opcode::PAnd,
+            dst: Some(3),
+            src: [Some(1), Some(2)],
+            imm: 0,
+            predicate: 0,
+            pred_negated: false,
+        },
+    );
 
     let mut b13 = Bundle::nop_bundle(W);
-    b13.set_slot(3, Syllable {
-        opcode: Opcode::POr,
-        dst: Some(4),
-        src: [Some(1), Some(2)],
-        imm: 0,
-        predicate: 0,
-        pred_negated: false,
-    });
+    b13.set_slot(
+        3,
+        Syllable {
+            opcode: Opcode::POr,
+            dst: Some(4),
+            src: [Some(1), Some(2)],
+            imm: 0,
+            predicate: 0,
+            pred_negated: false,
+        },
+    );
 
     let mut b14 = Bundle::nop_bundle(W);
-    b14.set_slot(3, Syllable {
-        opcode: Opcode::PXor,
-        dst: Some(5),
-        src: [Some(1), Some(2)],
-        imm: 0,
-        predicate: 0,
-        pred_negated: false,
-    });
+    b14.set_slot(
+        3,
+        Syllable {
+            opcode: Opcode::PXor,
+            dst: Some(5),
+            src: [Some(1), Some(2)],
+            imm: 0,
+            predicate: 0,
+            pred_negated: false,
+        },
+    );
 
     let mut b15 = Bundle::nop_bundle(W);
-    b15.set_slot(3, Syllable {
-        opcode: Opcode::Jump,
-        dst: None,
-        src: [None, None],
-        imm: 17,
-        predicate: 0,
-        pred_negated: false,
-    });
+    b15.set_slot(
+        3,
+        Syllable {
+            opcode: Opcode::Jump,
+            dst: None,
+            src: [None, None],
+            imm: 17,
+            predicate: 0,
+            pred_negated: false,
+        },
+    );
 
     let mut b16 = Bundle::nop_bundle(W);
     b16.set_slot(0, mov_imm(14, 999));
@@ -1010,24 +1217,30 @@ fn predicate_ops_with_none_sources_use_false_default() {
     let mut cpu = CpuState::new(W, LatencyTable::default());
 
     let mut b0 = Bundle::nop_bundle(W);
-    b0.set_slot(3, Syllable {
-        opcode: Opcode::PNot,
-        dst: Some(1),
-        src: [None, None],
-        imm: 0,
-        predicate: 0,
-        pred_negated: false,
-    });
+    b0.set_slot(
+        3,
+        Syllable {
+            opcode: Opcode::PNot,
+            dst: Some(1),
+            src: [None, None],
+            imm: 0,
+            predicate: 0,
+            pred_negated: false,
+        },
+    );
 
     let mut b1 = Bundle::nop_bundle(W);
-    b1.set_slot(3, Syllable {
-        opcode: Opcode::PAnd,
-        dst: Some(2),
-        src: [None, Some(1)],
-        imm: 0,
-        predicate: 0,
-        pred_negated: false,
-    });
+    b1.set_slot(
+        3,
+        Syllable {
+            opcode: Opcode::PAnd,
+            dst: Some(2),
+            src: [None, Some(1)],
+            imm: 0,
+            predicate: 0,
+            pred_negated: false,
+        },
+    );
 
     let mut b2 = Bundle::nop_bundle(W);
     b2.set_slot(3, ret());

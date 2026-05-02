@@ -3,6 +3,7 @@
 pub mod asm;
 pub mod bundle;
 pub mod cpu;
+pub mod hw;
 pub mod isa;
 pub mod latency;
 pub mod layout;

@@ -1,8 +1,8 @@
 use lwir_simulator::asm::parse_program;
 use lwir_simulator::bundle::Bundle;
 use lwir_simulator::isa::{Opcode, Syllable};
-use lwir_simulator::layout::canonical_layout;
 use lwir_simulator::latency::LatencyTable;
+use lwir_simulator::layout::canonical_layout;
 use lwir_simulator::verifier::{verify_program, Diagnostic, Rule};
 
 const W: usize = 4;
@@ -54,8 +54,21 @@ fn sparse_no_multiplier_header() -> String {
     .to_string()
 }
 
-fn syl(opcode: Opcode, dst: Option<usize>, src0: Option<usize>, src1: Option<usize>, imm: i64) -> Syllable {
-    Syllable { opcode, dst, src: [src0, src1], imm, predicate: 0, pred_negated: false }
+fn syl(
+    opcode: Opcode,
+    dst: Option<usize>,
+    src0: Option<usize>,
+    src1: Option<usize>,
+    imm: i64,
+) -> Syllable {
+    Syllable {
+        opcode,
+        dst,
+        src: [src0, src1],
+        imm,
+        predicate: 0,
+        pred_negated: false,
+    }
 }
 
 fn movi(dst: usize, imm: i64) -> Syllable {
@@ -174,18 +187,41 @@ fn nop_in_any_slot_is_legal() {
 fn canonical_layout_matches_legacy_slot_positions() {
     let layout = canonical_layout(W);
     let integer_ops = [
-        Opcode::Add, Opcode::Sub, Opcode::And, Opcode::Or, Opcode::Xor,
-        Opcode::Shl, Opcode::Srl, Opcode::Sra, Opcode::Mov, Opcode::MovImm,
-        Opcode::CmpEq, Opcode::CmpLt, Opcode::CmpUlt,
+        Opcode::Add,
+        Opcode::Sub,
+        Opcode::And,
+        Opcode::Or,
+        Opcode::Xor,
+        Opcode::Shl,
+        Opcode::Srl,
+        Opcode::Sra,
+        Opcode::Mov,
+        Opcode::MovImm,
+        Opcode::CmpEq,
+        Opcode::CmpLt,
+        Opcode::CmpUlt,
     ];
     let memory_ops = [
-        Opcode::LoadB, Opcode::LoadH, Opcode::LoadW, Opcode::LoadD,
-        Opcode::StoreB, Opcode::StoreH, Opcode::StoreW, Opcode::StoreD,
-        Opcode::Lea, Opcode::Prefetch,
+        Opcode::LoadB,
+        Opcode::LoadH,
+        Opcode::LoadW,
+        Opcode::LoadD,
+        Opcode::StoreB,
+        Opcode::StoreH,
+        Opcode::StoreW,
+        Opcode::StoreD,
+        Opcode::Lea,
+        Opcode::Prefetch,
     ];
     let control_ops = [
-        Opcode::Branch, Opcode::Jump, Opcode::Call, Opcode::Ret,
-        Opcode::PAnd, Opcode::POr, Opcode::PXor, Opcode::PNot,
+        Opcode::Branch,
+        Opcode::Jump,
+        Opcode::Call,
+        Opcode::Ret,
+        Opcode::PAnd,
+        Opcode::POr,
+        Opcode::PXor,
+        Opcode::PNot,
     ];
     let multiply_ops = [Opcode::Mul, Opcode::MulH];
 
@@ -211,7 +247,11 @@ fn canonical_layout_matches_legacy_slot_positions() {
 
 #[test]
 fn sparse_layout_is_clean_when_program_uses_only_declared_units() {
-    let source = format!("{}{}", sparse_no_multiplier_header(), "\nentry:\n{\n  i0: movi r1, 1\n  i1: nop\n  m : nop\n  x : ret\n}\n");
+    let source = format!(
+        "{}{}",
+        sparse_no_multiplier_header(),
+        "\nentry:\n{\n  i0: movi r1, 1\n  i1: nop\n  m : nop\n  x : ret\n}\n"
+    );
     let program = parse_program(&source).unwrap();
     let diags = verify_program(&program.layout, &program.bundles, &LatencyTable::default());
     assert!(diags.is_empty(), "{diags:?}");
@@ -219,7 +259,11 @@ fn sparse_layout_is_clean_when_program_uses_only_declared_units() {
 
 #[test]
 fn sparse_layout_rejects_missing_multiplier_unit() {
-    let source = format!("{}{}", sparse_no_multiplier_header(), "\nentry:\n{\n  i0: nop\n  i1: nop\n  m : nop\n  x : mul r1, r0, r0\n}\n");
+    let source = format!(
+        "{}{}",
+        sparse_no_multiplier_header(),
+        "\nentry:\n{\n  i0: nop\n  i1: nop\n  m : nop\n  x : mul r1, r0, r0\n}\n"
+    );
     let program = parse_program(&source).unwrap();
     let diags = verify_program(&program.layout, &program.bundles, &LatencyTable::default());
     assert!(has_rule(&diags, Rule::SlotOpcodeLegality), "{diags:?}");
@@ -240,8 +284,8 @@ fn slot_legality_example_file_is_flagged() {
 #[test]
 fn detects_same_bundle_gpr_raw() {
     let mut b = nop_bundle();
-    b.set_slot(0, movi(1, 42));                        // slot 0 writes r1
-    b.set_slot(1, add(2, 1, 0));                        // slot 1 reads r1 → RAW
+    b.set_slot(0, movi(1, 42)); // slot 0 writes r1
+    b.set_slot(1, add(2, 1, 0)); // slot 1 reads r1 → RAW
     let program = vec![b];
     let diags = verify_bundles(&program, &LatencyTable::default());
     assert!(has_rule(&diags, Rule::SameBundleGprRaw), "{diags:?}");
@@ -251,7 +295,7 @@ fn detects_same_bundle_gpr_raw() {
 fn detects_same_bundle_raw_via_ret_reads_link_reg() {
     let mut b = nop_bundle();
     b.set_slot(1, movi(31, 3)); // slot 1 writes r31 (link)
-    b.set_slot(3, ret());        // slot 3 ret implicitly reads r31
+    b.set_slot(3, ret()); // slot 3 ret implicitly reads r31
     let program = vec![b];
     let diags = verify_bundles(&program, &LatencyTable::default());
     assert!(has_rule(&diags, Rule::SameBundleGprRaw), "{diags:?}");
@@ -261,7 +305,7 @@ fn detects_same_bundle_raw_via_ret_reads_link_reg() {
 fn detects_same_bundle_raw_via_call_then_ret_in_wide_bundle() {
     let mut b = Bundle::nop_bundle(8);
     b.set_slot(3, call(0)); // slot 3 implicitly writes r31 (link)
-    b.set_slot(7, ret());   // slot 7 ret implicitly reads r31
+    b.set_slot(7, ret()); // slot 7 ret implicitly reads r31
     let program = vec![b];
     let diags = verify_bundles(&program, &LatencyTable::default());
     assert!(has_rule(&diags, Rule::SameBundleGprRaw), "{diags:?}");
@@ -303,8 +347,8 @@ fn waw_on_r0_is_not_flagged() {
 #[test]
 fn detects_same_bundle_waw_via_call_and_explicit_link_write_in_wide_bundle() {
     let mut b = Bundle::nop_bundle(8);
-    b.set_slot(3, call(0));      // slot 3 implicitly writes r31
-    b.set_slot(4, movi(31, 0));  // slot 4 also writes r31
+    b.set_slot(3, call(0)); // slot 3 implicitly writes r31
+    b.set_slot(4, movi(31, 0)); // slot 4 also writes r31
     let program = vec![b];
     let diags = verify_bundles(&program, &LatencyTable::default());
     assert!(has_rule(&diags, Rule::SameBundleGprWaw), "{diags:?}");
@@ -328,7 +372,7 @@ fn detects_same_bundle_pred_raw_branch() {
 fn detects_same_bundle_pred_raw_pnot() {
     let mut b = nop_bundle();
     b.set_slot(0, cmp_lt(1, 0, 0)); // slot 0 writes p1
-    b.set_slot(3, p_not(2, 1));      // slot 3 pnot reads p1 → pred RAW
+    b.set_slot(3, p_not(2, 1)); // slot 3 pnot reads p1 → pred RAW
     let program = vec![b];
     let diags = verify_bundles(&program, &LatencyTable::default());
     assert!(has_rule(&diags, Rule::SameBundlePredHazard), "{diags:?}");
@@ -338,7 +382,7 @@ fn detects_same_bundle_pred_raw_pnot() {
 fn detects_same_bundle_pred_raw_pand() {
     let mut b = nop_bundle();
     b.set_slot(0, cmp_lt(1, 0, 0)); // slot 0 writes p1
-    b.set_slot(3, p_and(2, 1, 0));  // slot 3 pand reads p1 as src0 → pred RAW
+    b.set_slot(3, p_and(2, 1, 0)); // slot 3 pand reads p1 as src0 → pred RAW
     let program = vec![b];
     let diags = verify_bundles(&program, &LatencyTable::default());
     assert!(has_rule(&diags, Rule::SameBundlePredHazard), "{diags:?}");
@@ -348,7 +392,7 @@ fn detects_same_bundle_pred_raw_pand() {
 fn detects_same_bundle_pred_waw() {
     let mut b = nop_bundle();
     b.set_slot(0, cmp_lt(1, 0, 0)); // slot 0 writes p1
-    b.set_slot(3, p_not(1, 2));      // slot 3 also writes p1 → pred WAW
+    b.set_slot(3, p_not(1, 2)); // slot 3 also writes p1 → pred WAW
     let program = vec![b];
     let diags = verify_bundles(&program, &LatencyTable::default());
     assert!(has_rule(&diags, Rule::SameBundlePredHazard), "{diags:?}");
@@ -471,7 +515,10 @@ fn clean_program_produces_no_diagnostics() {
     let source = std::fs::read_to_string("examples/clean_schedule.lwir").unwrap();
     let program = parse_program(&source).unwrap();
     let diags = verify_program(&program.layout, &program.bundles, &LatencyTable::default());
-    assert!(diags.is_empty(), "expected clean program but got: {diags:?}");
+    assert!(
+        diags.is_empty(),
+        "expected clean program but got: {diags:?}"
+    );
 }
 
 #[test]
@@ -499,7 +546,11 @@ fn verifier_binary_exits_clean_on_clean_program() {
         .output()
         .expect("binary should run");
 
-    assert!(out.status.success(), "stdout: {}", String::from_utf8_lossy(&out.stdout));
+    assert!(
+        out.status.success(),
+        "stdout: {}",
+        String::from_utf8_lossy(&out.stdout)
+    );
     let stdout = String::from_utf8(out.stdout).unwrap();
     assert!(stdout.contains("CLEAN"), "{stdout}");
 }
@@ -508,13 +559,17 @@ fn verifier_binary_exits_clean_on_clean_program() {
 fn verifier_binary_accepts_width_8_program() {
     let path = write_temp_lwir(
         "width8-clean",
-        &format!("{}{}", processor_header(8), r#"
+        &format!(
+            "{}{}",
+            processor_header(8),
+            r#"
 {
   0: movi r1, 1
   4: movi r2, 2
   7: ret
 }
-"#),
+"#
+        ),
     );
 
     let out = std::process::Command::new(env!("CARGO_BIN_EXE_lwir_verify"))
@@ -522,7 +577,11 @@ fn verifier_binary_accepts_width_8_program() {
         .output()
         .expect("binary should run");
 
-    assert!(out.status.success(), "stdout: {}", String::from_utf8_lossy(&out.stdout));
+    assert!(
+        out.status.success(),
+        "stdout: {}",
+        String::from_utf8_lossy(&out.stdout)
+    );
     let stdout = String::from_utf8(out.stdout).unwrap();
     assert!(stdout.contains("W=8"), "{stdout}");
     assert!(stdout.contains("CLEAN"), "{stdout}");
@@ -583,6 +642,8 @@ fn verifier_binary_prints_bundle_count_and_header() {
 fn backend_legal_fixtures_are_clean() {
     assert_clean_fixture::<4>("examples/fixtures/legal/w4_control_pred_mem_latency.lwir");
     assert_clean_fixture::<4>("examples/fixtures/legal/w4_composed_slot.lwir");
+    assert_clean_fixture::<4>("examples/fixtures/legal/w4_fp_unit.lwir");
+    assert_clean_fixture::<4>("examples/fixtures/legal/w4_aes_unit.lwir");
     assert_clean_fixture::<8>("examples/fixtures/legal/w8_pred_mem_latency.lwir");
     assert_clean_fixture::<16>("examples/fixtures/legal/w16_call_mem_latency.lwir");
 }
@@ -601,6 +662,10 @@ fn backend_illegal_fixtures_report_expected_rules() {
         "examples/fixtures/illegal/w16_predicate_and_slot.lwir",
         &[Rule::SameBundlePredHazard, Rule::SlotOpcodeLegality],
     );
+    assert_illegal_fixture::<4>(
+        "examples/fixtures/illegal/w4_missing_fp_unit.lwir",
+        &[Rule::SlotOpcodeLegality],
+    );
 }
 
 #[test]
@@ -612,7 +677,10 @@ fn processor_layout_parse_error_fixtures_are_rejected() {
     ] {
         let source = std::fs::read_to_string(path).unwrap();
         let err = parse_program(&source).expect_err("fixture should fail during parsing");
-        assert!(err.contains("processor") || err.contains("layout"), "{path}: {err}");
+        assert!(
+            err.contains("processor") || err.contains("layout"),
+            "{path}: {err}"
+        );
     }
 }
 
@@ -620,14 +688,20 @@ fn assert_clean_fixture<const WIDTH: usize>(path: &str) {
     let source = std::fs::read_to_string(path).unwrap();
     let program = parse_program(&source).unwrap();
     let diags = verify_program(&program.layout, &program.bundles, &LatencyTable::default());
-    assert!(diags.is_empty(), "{path} should be clean but got: {diags:?}");
+    assert!(
+        diags.is_empty(),
+        "{path} should be clean but got: {diags:?}"
+    );
 }
 
 fn assert_illegal_fixture<const WIDTH: usize>(path: &str, expected_rules: &[Rule]) {
     let source = std::fs::read_to_string(path).unwrap();
     let program = parse_program(&source).unwrap();
     let diags = verify_program(&program.layout, &program.bundles, &LatencyTable::default());
-    assert!(!diags.is_empty(), "{path} should produce verifier diagnostics");
+    assert!(
+        !diags.is_empty(),
+        "{path} should produce verifier diagnostics"
+    );
 
     for rule in expected_rules {
         assert!(

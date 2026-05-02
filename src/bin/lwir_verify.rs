@@ -60,11 +60,11 @@ fn main() -> ExitCode {
     println!();
     for d in &diags {
         let rule_tag = match d.rule {
-            Rule::SlotOpcodeLegality   => "slot-opcode-legality",
-            Rule::SameBundleGprRaw     => "same-bundle-gpr-raw",
-            Rule::SameBundleGprWaw     => "same-bundle-gpr-waw",
+            Rule::SlotOpcodeLegality => "slot-opcode-legality",
+            Rule::SameBundleGprRaw => "same-bundle-gpr-raw",
+            Rule::SameBundleGprWaw => "same-bundle-gpr-waw",
             Rule::SameBundlePredHazard => "same-bundle-pred-hazard",
-            Rule::GprReadyCycle        => "gpr-ready-cycle",
+            Rule::GprReadyCycle => "gpr-ready-cycle",
         };
         println!("[{rule_tag}] {}", d.message);
     }

@@ -14,6 +14,7 @@ pub enum OpClass {
     Control,
     PredicateLogic,
     FloatingPoint,
+    Aes,
 }
 
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
@@ -42,6 +43,7 @@ pub enum UnitKind {
 pub struct UnitDecl {
     pub name: String,
     pub kind: UnitKind,
+    pub latency: Option<u32>,
 }
 
 #[derive(Clone, PartialEq, Eq, Debug)]
@@ -51,6 +53,17 @@ pub struct SlotSpec {
 
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
 pub struct CacheConfig {
+}
+
+pub const DEFAULT_NUM_GPRS: usize = 32;
+pub const DEFAULT_NUM_PREDS: usize = 16;
+pub const DEFAULT_MEM_SIZE: usize = 65536;
+
+#[derive(Clone, Copy, PartialEq, Eq, Debug)]
+pub struct ArchConfig {
+    pub gprs: usize,
+    pub preds: usize,
+    pub memory_bytes: usize,
 }
 
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
@@ -63,13 +76,14 @@ pub struct ProcessorLayout {
     pub width: usize,
     pub units: Vec<UnitDecl>,
     pub slots: Vec<SlotSpec>,
+    pub arch: ArchConfig,
     pub cache: CacheConfig,
     pub topology: TopologyConfig,
 }
 
 impl ProcessorLayout {
     pub fn validate(&self) -> (ret: bool)
-        ensures ret == (layout_well_formed(self) && topology_supported_in_stage0(self)),
+        ensures ret == (layout_well_formed(self) && topology_supported_in_stage0(self) && arch_supported(self)),
     {
         if !is_valid_width_runtime(self.width) {
             return false;
@@ -78,6 +92,7 @@ impl ProcessorLayout {
             return false;
         }
         if !topology_supported_in_stage0_runtime(self) { return false; }
+        if !arch_supported_runtime(self.arch) { return false; }
 
         let mut slot = 0usize;
         while slot < self.slots.len()
@@ -86,6 +101,7 @@ impl ProcessorLayout {
                 self.slots.len() == self.width,
                 crate::bundle::is_valid_width(self.width),
                 topology_supported_in_stage0(self),
+                arch_supported(self),
                 forall|i: int| 0 <= i < slot ==> self.slots[i].units.len() > 0,
                 forall|i: int, j: int|
                     0 <= i < slot && 0 <= j < self.slots[i].units.len() ==>
@@ -184,10 +200,24 @@ impl ProcessorLayout {
 
 }
 
+pub fn default_arch_config() -> ArchConfig {
+    ArchConfig {
+        gprs: DEFAULT_NUM_GPRS,
+        preds: DEFAULT_NUM_PREDS,
+        memory_bytes: DEFAULT_MEM_SIZE,
+    }
+}
+
 pub fn topology_supported_in_stage0_runtime(layout: &ProcessorLayout) -> (ret: bool)
     ensures ret == topology_supported_in_stage0(layout),
 {
     layout.topology.cpus == 1
+}
+
+pub fn arch_supported_runtime(arch: ArchConfig) -> (ret: bool)
+    ensures ret == arch_supported_config(arch),
+{
+    arch.gprs >= 32 && arch.preds >= 1 && arch.memory_bytes >= 8
 }
 
 pub fn unit_kind_executes_runtime(kind: UnitKind, opcode: Opcode) -> (ret: bool)
@@ -216,7 +246,60 @@ pub fn unit_kind_executes_runtime(kind: UnitKind, opcode: Opcode) -> (ret: bool)
             Opcode::Mul | Opcode::MulH => true,
             _ => false,
         },
-        UnitKind::Fp(_) | UnitKind::Aes(_) => false,
+        UnitKind::Fp(_) => match opcode {
+            Opcode::FpAdd32 | Opcode::FpMul32 | Opcode::FpAdd64 | Opcode::FpMul64 => true,
+            _ => false,
+        },
+        UnitKind::Aes(_) => match opcode {
+            Opcode::AesEnc | Opcode::AesDec => true,
+            _ => false,
+        },
+    }
+}
+
+pub fn unit_kind_has_class_runtime(kind: UnitKind, class: OpClass) -> (ret: bool)
+    ensures ret == unit_kind_has_class(kind, class),
+{
+    match kind {
+        UnitKind::IntegerAlu => match class {
+            OpClass::GprWriter | OpClass::Compare | OpClass::PredicateLogic => true,
+            _ => false,
+        },
+        UnitKind::Memory => match class {
+            OpClass::GprWriter | OpClass::Store => true,
+            _ => false,
+        },
+        UnitKind::Control => match class {
+            OpClass::Control | OpClass::PredicateLogic => true,
+            _ => false,
+        },
+        UnitKind::Multiplier => match class {
+            OpClass::GprWriter => true,
+            _ => false,
+        },
+        UnitKind::Fp(_) => match class {
+            OpClass::FloatingPoint => true,
+            _ => false,
+        },
+        UnitKind::Aes(_) => match class {
+            OpClass::Aes => true,
+            _ => false,
+        },
+    }
+}
+
+pub fn unit_kind_default_latency_runtime(kind: UnitKind) -> (ret: u32)
+    ensures ret == unit_kind_default_latency(kind),
+{
+    match kind {
+        UnitKind::IntegerAlu => 1u32,
+        UnitKind::Memory => 3u32,
+        UnitKind::Control => 1u32,
+        UnitKind::Multiplier => 3u32,
+        UnitKind::Fp(FpVariant::Fp32) => 4u32,
+        UnitKind::Fp(FpVariant::Fp64) => 6u32,
+        UnitKind::Fp(FpVariant::Fp64Fma) => 6u32,
+        UnitKind::Aes(AesVariant::AesNi) => 4u32,
     }
 }
 
@@ -243,6 +326,63 @@ pub open spec fn topology_supported_in_stage0(layout: &ProcessorLayout) -> bool 
     layout.topology.cpus == 1
 }
 
+pub open spec fn arch_supported(layout: &ProcessorLayout) -> bool {
+    arch_supported_config(layout.arch)
+}
+
+pub open spec fn arch_supported_config(arch: ArchConfig) -> bool {
+    arch.gprs >= 32 && arch.preds >= 1 && arch.memory_bytes >= 8
+}
+
+pub open spec fn unit_kind_has_class(kind: UnitKind, class: OpClass) -> bool {
+    match kind {
+        UnitKind::IntegerAlu => match class {
+            OpClass::GprWriter | OpClass::Compare | OpClass::PredicateLogic => true,
+            _ => false,
+        },
+        UnitKind::Memory => match class {
+            OpClass::GprWriter | OpClass::Store => true,
+            _ => false,
+        },
+        UnitKind::Control => match class {
+            OpClass::Control | OpClass::PredicateLogic => true,
+            _ => false,
+        },
+        UnitKind::Multiplier => match class {
+            OpClass::GprWriter => true,
+            _ => false,
+        },
+        UnitKind::Fp(_) => match class {
+            OpClass::FloatingPoint => true,
+            _ => false,
+        },
+        UnitKind::Aes(_) => match class {
+            OpClass::Aes => true,
+            _ => false,
+        },
+    }
+}
+
+pub open spec fn unit_kind_default_latency(kind: UnitKind) -> u32 {
+    match kind {
+        UnitKind::IntegerAlu => 1u32,
+        UnitKind::Memory => 3u32,
+        UnitKind::Control => 1u32,
+        UnitKind::Multiplier => 3u32,
+        UnitKind::Fp(FpVariant::Fp32) => 4u32,
+        UnitKind::Fp(FpVariant::Fp64) => 6u32,
+        UnitKind::Fp(FpVariant::Fp64Fma) => 6u32,
+        UnitKind::Aes(AesVariant::AesNi) => 4u32,
+    }
+}
+
+pub open spec fn unit_decl_latency(unit: UnitDecl) -> u32 {
+    match unit.latency {
+        Some(latency) => latency,
+        None => unit_kind_default_latency(unit.kind),
+    }
+}
+
 pub open spec fn unit_kind_executes(kind: UnitKind, opcode: Opcode) -> bool {
     match kind {
         UnitKind::IntegerAlu => match opcode {
@@ -267,7 +407,14 @@ pub open spec fn unit_kind_executes(kind: UnitKind, opcode: Opcode) -> bool {
             Opcode::Mul | Opcode::MulH => true,
             _ => false,
         },
-        UnitKind::Fp(_) | UnitKind::Aes(_) => false,
+        UnitKind::Fp(_) => match opcode {
+            Opcode::FpAdd32 | Opcode::FpMul32 | Opcode::FpAdd64 | Opcode::FpMul64 => true,
+            _ => false,
+        },
+        UnitKind::Aes(_) => match opcode {
+            Opcode::AesEnc | Opcode::AesDec => true,
+            _ => false,
+        },
     }
 }
 
@@ -363,6 +510,12 @@ pub proof fn lemma_canonical_layout_matches_legacy_slot_class()
             Opcode::POr => {}
             Opcode::PXor => {}
             Opcode::PNot => {}
+            Opcode::FpAdd32 => {}
+            Opcode::FpMul32 => {}
+            Opcode::FpAdd64 => {}
+            Opcode::FpMul64 => {}
+            Opcode::AesEnc => {}
+            Opcode::AesDec => {}
             Opcode::Nop => {}
         }
     }
@@ -416,10 +569,26 @@ pub fn program_layout_compatible_runtime(layout: &ProcessorLayout, bundles: &Vec
 
 pub fn canonical_layout(width: usize) -> ProcessorLayout {
     let units = vec![
-        UnitDecl { name: "alu".to_string(), kind: UnitKind::IntegerAlu },
-        UnitDecl { name: "mem".to_string(), kind: UnitKind::Memory },
-        UnitDecl { name: "ctrl".to_string(), kind: UnitKind::Control },
-        UnitDecl { name: "mul".to_string(), kind: UnitKind::Multiplier },
+        UnitDecl {
+            name: "alu".to_string(),
+            kind: UnitKind::IntegerAlu,
+            latency: None,
+        },
+        UnitDecl {
+            name: "mem".to_string(),
+            kind: UnitKind::Memory,
+            latency: None,
+        },
+        UnitDecl {
+            name: "ctrl".to_string(),
+            kind: UnitKind::Control,
+            latency: None,
+        },
+        UnitDecl {
+            name: "mul".to_string(),
+            kind: UnitKind::Multiplier,
+            latency: None,
+        },
     ];
     let mut slots = Vec::with_capacity(width);
     for slot in 0..width {
@@ -434,6 +603,7 @@ pub fn canonical_layout(width: usize) -> ProcessorLayout {
         width,
         units,
         slots,
+        arch: default_arch_config(),
         cache: CacheConfig {},
         topology: TopologyConfig { cpus: 1 },
     }

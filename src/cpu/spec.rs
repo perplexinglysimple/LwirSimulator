@@ -7,14 +7,14 @@ verus! {
 /// Is `syl` active in state `cpu`?
 pub open spec fn spec_syl_active(cpu: &CpuState, syl: &Syllable) -> bool {
     let pv = if syl.predicate == 0 { true }
-             else if syl.predicate < NUM_PREDS { cpu.preds[syl.predicate as int] }
+             else if syl.predicate < cpu.num_preds { cpu.preds[syl.predicate as int] }
              else { false };
     if syl.pred_negated { !pv } else { pv }
 }
 
 /// Read GPR `idx` with r0-is-zero and out-of-range clamping.
 pub open spec fn spec_gpr(cpu: &CpuState, idx: usize) -> u64 {
-    if idx == 0 || idx >= NUM_GPRS { 0u64 } else { cpu.gprs[idx as int] }
+    if idx == 0 || idx >= cpu.num_gprs { 0u64 } else { cpu.gprs[idx as int] }
 }
 
 /// Read source operand (`None` → 0).
@@ -24,7 +24,7 @@ pub open spec fn spec_src(cpu: &CpuState, r: Option<usize>) -> u64 {
 
 /// Read predicate register (`idx` 0 → true, out-of-range → false).
 pub open spec fn spec_pred(cpu: &CpuState, idx: usize) -> bool {
-    if idx == 0 { true } else if idx < NUM_PREDS { cpu.preds[idx as int] } else { false }
+    if idx == 0 { true } else if idx < cpu.num_preds { cpu.preds[idx as int] } else { false }
 }
 
 /// Read predicate source (`None` → false).
@@ -39,7 +39,10 @@ pub open spec fn spec_is_gpr_writer(op: Opcode) -> bool {
     op == Opcode::Srl  || op == Opcode::Sra  || op == Opcode::Mov ||
     op == Opcode::MovImm || op == Opcode::Mul || op == Opcode::MulH ||
     op == Opcode::Lea  || op == Opcode::LoadB || op == Opcode::LoadH ||
-    op == Opcode::LoadW || op == Opcode::LoadD
+    op == Opcode::LoadW || op == Opcode::LoadD ||
+    op == Opcode::FpAdd32 || op == Opcode::FpMul32 ||
+    op == Opcode::FpAdd64 || op == Opcode::FpMul64 ||
+    op == Opcode::AesEnc || op == Opcode::AesDec
 }
 
 /// Is `op` a store opcode (writes memory, not a GPR)?

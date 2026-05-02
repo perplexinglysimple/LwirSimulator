@@ -40,7 +40,7 @@ impl CpuState {
 
                 if earlier_active && later_active {
                     if let Some(dst) = Self::opcode_gpr_write_dst(earlier.opcode, earlier.dst) {
-                        if dst > 0 && dst < NUM_GPRS {
+                        if dst > 0 && dst < self.num_gprs {
                             if later_syl.src[0] == Some(dst) || later_syl.src[1] == Some(dst) {
                                 return false;
                             }
@@ -59,7 +59,7 @@ impl CpuState {
 
                     if Self::opcode_writes_pred(earlier.opcode) {
                         if let Some(dst) = earlier.dst {
-                            if dst > 0 && dst < NUM_PREDS {
+                            if dst > 0 && dst < self.num_preds {
                                 if Self::opcode_reads_pred(later_syl.opcode)
                                     && (later_syl.src[0] == Some(dst)
                                         || later_syl.src[1] == Some(dst)
@@ -112,7 +112,7 @@ impl CpuState {
                     decreases 2 - src_idx,
                 {
                     if let Some(src) = syl.src[src_idx] {
-                        if src > 0 && src < NUM_GPRS
+                        if src > 0 && src < self.num_gprs
                             && self.scoreboard[src].ready_cycle > next_cycle
                         {
                             return true;
