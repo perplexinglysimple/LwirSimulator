@@ -14,9 +14,6 @@ use std::env;
 use std::fs;
 use std::process::ExitCode;
 
-const DEFAULT_WIDTH: usize = 4;
-const SUPPORTED_WIDTHS: &str = "4, 8, 16, 32, 64, 128, 256";
-
 fn main() -> ExitCode {
     let mut args = env::args();
     let exe = args.next().unwrap_or_else(|| "lwir_verify".to_string());
@@ -39,32 +36,7 @@ fn main() -> ExitCode {
         }
     };
 
-    let width = match declared_width(&source) {
-        Ok(Some(width)) => width,
-        Ok(None) => DEFAULT_WIDTH,
-        Err(e) => {
-            eprintln!("error: parse failed for `{path}`: {e}");
-            return ExitCode::from(2);
-        }
-    };
-
-    match width {
-        4 => verify_for_width::<4>(&path, &source),
-        8 => verify_for_width::<8>(&path, &source),
-        16 => verify_for_width::<16>(&path, &source),
-        32 => verify_for_width::<32>(&path, &source),
-        64 => verify_for_width::<64>(&path, &source),
-        128 => verify_for_width::<128>(&path, &source),
-        256 => verify_for_width::<256>(&path, &source),
-        _ => {
-            eprintln!("error: unsupported width {width}; supported widths are: {SUPPORTED_WIDTHS}");
-            ExitCode::from(2)
-        }
-    }
-}
-
-fn verify_for_width<const W: usize>(path: &str, source: &str) -> ExitCode {
-    let program = match parse_program::<W>(source) {
+    let program = match parse_program(&source) {
         Ok(p) => p,
         Err(e) => {
             eprintln!("error: parse failed for `{path}`: {e}");
@@ -73,11 +45,11 @@ fn verify_for_width<const W: usize>(path: &str, source: &str) -> ExitCode {
     };
 
     let latencies = LatencyTable::default();
-    let diags = verify_program(&program, &latencies);
+    let diags = verify_program(&program.bundles, &latencies);
 
-    println!("LWIR Verifier (W={W})");
+    println!("LWIR Verifier (W={})", program.layout.width);
     println!("Program : {path}");
-    println!("Bundles : {}", program.len());
+    println!("Bundles : {}", program.bundles.len());
 
     if diags.is_empty() {
         println!("Result  : CLEAN — no contract violations found");
@@ -98,33 +70,4 @@ fn verify_for_width<const W: usize>(path: &str, source: &str) -> ExitCode {
     }
 
     ExitCode::from(1)
-}
-
-fn declared_width(source: &str) -> Result<Option<usize>, String> {
-    for (idx, raw_line) in source.lines().enumerate() {
-        let line_no = idx + 1;
-        let line = strip_comment(raw_line).trim();
-        if !line.starts_with(".width") {
-            continue;
-        }
-
-        let width = line
-            .strip_prefix(".width")
-            .map(str::trim)
-            .filter(|s| !s.is_empty())
-            .ok_or_else(|| format!("line {line_no}: expected `.width <n>`"))?;
-        let parsed_width = width
-            .parse::<usize>()
-            .map_err(|_| format!("line {line_no}: invalid width `{width}`"))?;
-        return Ok(Some(parsed_width));
-    }
-
-    Ok(None)
-}
-
-fn strip_comment(line: &str) -> &str {
-    match line.find('#') {
-        Some(idx) => &line[..idx],
-        None => line,
-    }
 }

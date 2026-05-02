@@ -123,8 +123,8 @@ Architectural state includes:
 cargo run --bin lwir_simulator -- examples/hello.lwir
 ```
 
-The simulator reads `.width <n>` when present and dispatches to widths
-`4, 8, 16, 32, 64, 128, 256`; files without a width directive default to `W=4`.
+The simulator requires a leading `.processor { ... }` header. The header
+declares the runtime bundle width and the stage-0 slot layout.
 
 Expected output:
 
@@ -169,7 +169,7 @@ Current rules:
 - line form uses `|` to separate multiple syllables in the same bundle
 - block form uses one `slot: instruction` per line inside `{ ... }`
 - labels end with `:` and may prefix a bundle line or a following bundle block
-- optional `.width <n>` must match the compiled bundle width
+- a mandatory `.processor { ... }` header declares width and layout
 - comments start with `#`
 - the first token is the slot: `i0`, `i1`, `m`, `x`, or a numeric slot index
 - branches use `branch pN, target` or `branch !pN, target`
@@ -180,6 +180,27 @@ Current rules:
 Example:
 
 ```text
+.processor {
+  width 4
+
+  hardware {
+    unit alu = integer_alu
+    unit mem = memory
+    unit ctrl = control
+    unit mul = multiplier
+  }
+
+  layout slots {
+    0 = { alu }
+    1 = { alu }
+    2 = { mem }
+    3 = { ctrl, mul }
+  }
+
+  cache { }
+  topology { cpus 1 }
+}
+
 start: i0 mov_imm r1, 6 | i1 mov_imm r2, 7
        x mul r3, r1, r2
        m store_d r0, r3, 0x100
@@ -189,7 +210,26 @@ start: i0 mov_imm r1, 6 | i1 mov_imm r2, 7
 Block-style example:
 
 ```text
-.width 4
+.processor {
+  width 4
+
+  hardware {
+    unit alu = integer_alu
+    unit mem = memory
+    unit ctrl = control
+    unit mul = multiplier
+  }
+
+  layout slots {
+    0 = { alu }
+    1 = { alu }
+    2 = { mem }
+    3 = { ctrl, mul }
+  }
+
+  cache { }
+  topology { cpus 1 }
+}
 
 start:
 {
@@ -221,8 +261,8 @@ Supported operand shapes:
 
 `lwir_verify` checks a `.lwir` / `.lwirasm` file against the compiler/scheduler
 contract in [`docs/compiler_contract.md`](docs/compiler_contract.md) without
-executing the program. It reads `.width <n>` when present and supports widths
-`4, 8, 16, 32, 64, 128, 256`; files without a width directive default to `W=4`.
+executing the program. It uses the mandatory `.processor { ... }` header for
+the runtime width and layout.
 
 ```sh
 cargo run --bin lwir_verify -- examples/clean_schedule.lwir
@@ -299,7 +339,7 @@ src/
   lib.rs       - crate root
   asm.rs       - text assembly parser and loader
   isa.rs       - opcodes, slot classes, Syllable type
-  bundle.rs    - Bundle<W> with Verus width invariant
+  bundle.rs    - runtime-width Bundle with Verus width invariant
   verifier.rs  - static compiler-contract verifier and proof boundary
   cpu.rs       - thin module wrapper for the CPU implementation
   bin/

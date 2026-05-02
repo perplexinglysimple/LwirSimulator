@@ -4,7 +4,7 @@ verus! {
 // Well-formedness predicate and basic accessors
 // ---------------------------------------------------------------------------
 
-impl<const W: usize> CpuState<W> {
+impl CpuState {
     /// The processor state is well-formed when all register files and memory
     /// have the expected sizes, and the hardwired values (r0=0, p0=true) hold.
     pub open spec fn wf(&self) -> bool {
@@ -12,14 +12,17 @@ impl<const W: usize> CpuState<W> {
         &&& self.preds.len()      == NUM_PREDS
         &&& self.scoreboard.len() == NUM_GPRS
         &&& self.memory.len()     == MEM_SIZE
+        &&& crate::bundle::is_valid_width(self.width)
         &&& self.gprs[0int]       == 0u64
         &&& self.preds[0int]      == true
     }
 
     /// Create a reset CPU.
-    pub fn new(latencies: LatencyTable) -> (ret: Self)
+    pub fn new(width: usize, latencies: LatencyTable) -> (ret: Self)
+        requires crate::bundle::is_valid_width(width),
         ensures
             ret.wf(),
+            ret.width == width,
             ret.pc    == 0,
             ret.cycle == 0,
             !ret.halted,
@@ -71,7 +74,7 @@ impl<const W: usize> CpuState<W> {
             k += 1;
         }
 
-        CpuState { gprs, preds, pc: 0, cycle: 0, scoreboard, memory, halted: false, latencies }
+        CpuState { width, gprs, preds, pc: 0, cycle: 0, scoreboard, memory, halted: false, latencies }
     }
 
     /// Read GPR at `idx`.

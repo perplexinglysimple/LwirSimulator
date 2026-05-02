@@ -112,16 +112,16 @@ pub enum TraceControlFlow {
     },
 }
 
-impl<const W: usize> CpuState<W> {
+impl CpuState {
     /// Run until the program halts or PC leaves the program, returning a stable trace.
-    pub fn trace_program(&mut self, program: &[Bundle<W>]) -> TraceLog {
+    pub fn trace_program(&mut self, program: &[Bundle]) -> TraceLog {
         let mut events = Vec::new();
         while let Some(event) = self.step_trace(program) {
             events.push(event);
         }
 
         TraceLog {
-            width: W,
+            width: self.width,
             events,
             final_pc: self.pc,
             final_cycle: self.cycle,
@@ -130,7 +130,7 @@ impl<const W: usize> CpuState<W> {
     }
 
     /// Execute one traced bundle attempt. Returns `None` when no bundle can issue.
-    pub fn step_trace(&mut self, program: &[Bundle<W>]) -> Option<TraceEvent> {
+    pub fn step_trace(&mut self, program: &[Bundle]) -> Option<TraceEvent> {
         if self.halted || self.pc >= program.len() {
             return None;
         }
@@ -244,7 +244,7 @@ impl<const W: usize> CpuState<W> {
         })
     }
 
-    fn collect_active_syllables(&self, bundle: &Bundle<W>) -> Vec<TraceActiveSyllable> {
+    fn collect_active_syllables(&self, bundle: &Bundle) -> Vec<TraceActiveSyllable> {
         let mut active = Vec::new();
         for (slot, syl) in bundle.syllables.iter().enumerate() {
             if syl.opcode != Opcode::Nop && self.syl_is_active_runtime(syl) {
@@ -254,7 +254,7 @@ impl<const W: usize> CpuState<W> {
         active
     }
 
-    fn collect_trace_stalls(&self, bundle: &Bundle<W>) -> Vec<TraceStall> {
+    fn collect_trace_stalls(&self, bundle: &Bundle) -> Vec<TraceStall> {
         let needed_cycle = self.cycle + 1;
         let mut stalls = Vec::new();
 

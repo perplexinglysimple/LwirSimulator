@@ -4,7 +4,7 @@ verus! {
 // Execution engine
 // ---------------------------------------------------------------------------
 
-impl<const W: usize> CpuState<W> {
+impl CpuState {
     /// Record a writeback: update the destination GPR.
     fn writeback(&mut self, syl: &Syllable, val: u64, latency: u32)
         requires old(self).wf(),
@@ -545,7 +545,7 @@ impl<const W: usize> CpuState<W> {
     }
 
     /// Advance by one bundle.
-    pub fn step(&mut self, program: &Vec<Bundle<W>>) -> (ret: bool)
+    pub fn step(&mut self, program: &Vec<Bundle>) -> (ret: bool)
         requires
             old(self).wf(),
             old(self).cycle < u64::MAX,

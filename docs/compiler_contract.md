@@ -25,9 +25,9 @@ The emitted program must target a valid bundle width from this set:
 **Why:** simulator data structures and issuance rules assume these widths.
 
 **Enforcement mapping:**
-- Existing check: source-level `.width` must match parser instantiation width (`parse_program::<W>`). If mismatched, parse fails.
-- Existing invariant: `Bundle<W>` is only intended for valid widths via `is_valid_width` and `nop_bundle` precondition.
-- Planned verifier check: reject programs that declare unsupported width before simulator instantiation.
+- Existing check: the mandatory `.processor { ... }` header declares the runtime width and must use a supported value.
+- Existing invariant: runtime `Bundle` construction uses `is_valid_width` and `nop_bundle(width)` preconditions.
+- Existing verifier check: malformed or unsupported processor layouts fail during parsing before simulation or static verification.
 
 ### 2) Each slot contains only legal opcodes for that slot class
 
@@ -113,7 +113,7 @@ If not ready, the bundle is not executable this cycle (simulator stalls one cycl
 
 | Contract rule | Existing simulator check | Planned verifier check |
 |---|---|---|
-| Valid bundle width | Parser `.width` agreement and bundle construction invariants | Front-end width gate |
+| Valid bundle width | Processor-layout parse check and bundle construction invariants | Front-end width gate |
 | Slot opcode legality | `bundle_is_legal` slot-class match | Static per-slot class validator |
 | Same-bundle GPR RAW | `bundle_is_legal` | Static bundle hazard pass |
 | Same-bundle GPR WAW | `bundle_is_legal` | Static bundle hazard pass |
@@ -126,7 +126,7 @@ If not ready, the bundle is not executable this cycle (simulator stalls one cycl
 
 A program is legal for simulator acceptance if:
 
-1. It parses successfully for the chosen width `W`.
+1. It parses successfully with a valid `.processor { ... }` layout.
 2. Every bundle satisfies slot-class and same-bundle hazard rules.
 3. At runtime, when a bundle is issued, each active GPR source is scoreboard-ready (otherwise the machine may stall until ready).
 

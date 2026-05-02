@@ -20,9 +20,9 @@ use vstd::prelude::*;
 // Private exec helpers (outside verus! — trusted via verify_program's postcondition)
 // ---------------------------------------------------------------------------
 
-fn check_slot_legality<const W: usize>(
+fn check_slot_legality(
     bidx: usize,
-    bundle: &Bundle<W>,
+    bundle: &Bundle,
     diags: &mut Vec<Diagnostic>,
 ) {
     for (slot, syl) in bundle.syllables.iter().enumerate() {
@@ -48,7 +48,7 @@ fn check_slot_legality<const W: usize>(
     }
 }
 
-fn check_gpr_hazards<const W: usize>(bidx: usize, bundle: &Bundle<W>, diags: &mut Vec<Diagnostic>) {
+fn check_gpr_hazards(bidx: usize, bundle: &Bundle, diags: &mut Vec<Diagnostic>) {
     let n = bundle.syllables.len();
     for i in 0..n {
         let ei = &bundle.syllables[i];
@@ -102,9 +102,9 @@ fn check_gpr_hazards<const W: usize>(bidx: usize, bundle: &Bundle<W>, diags: &mu
     }
 }
 
-fn check_pred_hazards<const W: usize>(
+fn check_pred_hazards(
     bidx: usize,
-    bundle: &Bundle<W>,
+    bundle: &Bundle,
     diags: &mut Vec<Diagnostic>,
 ) {
     let n = bundle.syllables.len();
@@ -153,9 +153,9 @@ fn check_pred_hazards<const W: usize>(
     }
 }
 
-fn check_gpr_timing<const W: usize>(
+fn check_gpr_timing(
     bidx: usize,
-    bundle: &Bundle<W>,
+    bundle: &Bundle,
     issue_cycle: u64,
     ready_at: &[u64],
     diags: &mut Vec<Diagnostic>,
@@ -196,8 +196,8 @@ fn check_gpr_timing<const W: usize>(
     }
 }
 
-fn update_ready_at<const W: usize>(
-    bundle: &Bundle<W>,
+fn update_ready_at(
+    bundle: &Bundle,
     issue_cycle: u64,
     latencies: &LatencyTable,
     ready_at: &mut Vec<u64>,
@@ -324,7 +324,7 @@ pub struct Diagnostic {
 // Each predicate is factored into a per-slot/per-pair helper so that the
 // forall bodies have a single function-call term to use as a Verus trigger.
 
-pub open spec fn spec_slot_ok_in<const W: usize>(bundle: &Bundle<W>, slot: int) -> bool {
+pub open spec fn spec_slot_ok_in(bundle: &Bundle, slot: int) -> bool {
     bundle.syllables[slot].opcode == Opcode::Nop ||
     crate::isa::spec_slot_class(bundle.syllables[slot].opcode)
         == crate::cpu::spec_slot_class_for_index(slot)
@@ -332,12 +332,12 @@ pub open spec fn spec_slot_ok_in<const W: usize>(bundle: &Bundle<W>, slot: int) 
 
 /// A bundle has no slot-opcode legality violations under the conservative contract
 /// (all syllables treated as unconditionally active).
-pub open spec fn spec_bundle_slot_ok<const W: usize>(bundle: &Bundle<W>) -> bool {
+pub open spec fn spec_bundle_slot_ok(bundle: &Bundle) -> bool {
     forall|slot: int| 0 <= slot < bundle.syllables.len() ==>
-        #[trigger] spec_slot_ok_in::<W>(bundle, slot)
+        #[trigger] spec_slot_ok_in(bundle, slot)
 }
 
-pub open spec fn spec_gpr_pair_ok_in<const W: usize>(bundle: &Bundle<W>, i: int, j: int) -> bool {
+pub open spec fn spec_gpr_pair_ok_in(bundle: &Bundle, i: int, j: int) -> bool {
     match crate::cpu::spec_gpr_write_dst(bundle.syllables[i].opcode, bundle.syllables[i].dst) {
         None      => true,
         Some(dst) => dst == 0 || dst >= NUM_GPRS || (
@@ -356,12 +356,12 @@ pub open spec fn spec_gpr_pair_ok_in<const W: usize>(bundle: &Bundle<W>, i: int,
 }
 
 /// A bundle has no same-bundle GPR RAW or WAW hazards under the conservative contract.
-pub open spec fn spec_bundle_gpr_hazard_free<const W: usize>(bundle: &Bundle<W>) -> bool {
+pub open spec fn spec_bundle_gpr_hazard_free(bundle: &Bundle) -> bool {
     forall|i: int, j: int| 0 <= i < j < bundle.syllables.len() ==>
-        #[trigger] spec_gpr_pair_ok_in::<W>(bundle, i, j)
+        #[trigger] spec_gpr_pair_ok_in(bundle, i, j)
 }
 
-pub open spec fn spec_pred_pair_ok_in<const W: usize>(bundle: &Bundle<W>, i: int, j: int) -> bool {
+pub open spec fn spec_pred_pair_ok_in(bundle: &Bundle, i: int, j: int) -> bool {
     let ei = bundle.syllables[i];
     let lj = bundle.syllables[j];
     !crate::cpu::spec_opcode_writes_pred(ei.opcode) || match ei.dst {
@@ -376,9 +376,9 @@ pub open spec fn spec_pred_pair_ok_in<const W: usize>(bundle: &Bundle<W>, i: int
 }
 
 /// A bundle has no same-bundle predicate hazards under the conservative contract.
-pub open spec fn spec_bundle_pred_hazard_free<const W: usize>(bundle: &Bundle<W>) -> bool {
+pub open spec fn spec_bundle_pred_hazard_free(bundle: &Bundle) -> bool {
     forall|i: int, j: int| 0 <= i < j < bundle.syllables.len() ==>
-        #[trigger] spec_pred_pair_ok_in::<W>(bundle, i, j)
+        #[trigger] spec_pred_pair_ok_in(bundle, i, j)
 }
 
 // --- Soundness lemmas (machine-checked by Verus/Z3) ---
@@ -390,26 +390,26 @@ pub open spec fn spec_bundle_pred_hazard_free<const W: usize>(bundle: &Bundle<W>
 // `CpuState::bundle_is_legal` in any reachable CPU state.
 
 /// Slot-legality conservatism: unconditional slot-ok implies active-slot-ok.
-pub proof fn lemma_slot_ok_implies_active_slot_legal<const W: usize>(
-    bundle: &Bundle<W>,
-    cpu: &CpuState<W>,
+pub proof fn lemma_slot_ok_implies_active_slot_legal(
+    bundle: &Bundle,
+    cpu: &CpuState,
     slot: int,
 )
     requires
         cpu.wf(),
         0 <= slot < bundle.syllables.len(),
         crate::cpu::spec_syl_active(cpu, &bundle.syllables[slot]),
-        spec_bundle_slot_ok::<W>(bundle),
+        spec_bundle_slot_ok(bundle),
     ensures
-        spec_slot_ok_in::<W>(bundle, slot),
+        spec_slot_ok_in(bundle, slot),
 {
-    assert(spec_slot_ok_in::<W>(bundle, slot));
+    assert(spec_slot_ok_in(bundle, slot));
 }
 
 /// GPR-hazard conservatism: unconditional hazard-free implies active-pair hazard-free.
-pub proof fn lemma_gpr_hazard_free_implies_active_pair_ok<const W: usize>(
-    bundle: &Bundle<W>,
-    cpu: &CpuState<W>,
+pub proof fn lemma_gpr_hazard_free_implies_active_pair_ok(
+    bundle: &Bundle,
+    cpu: &CpuState,
     i: int,
     j: int,
 )
@@ -419,17 +419,17 @@ pub proof fn lemma_gpr_hazard_free_implies_active_pair_ok<const W: usize>(
         j < bundle.syllables.len(),
         crate::cpu::spec_syl_active(cpu, &bundle.syllables[i]),
         crate::cpu::spec_syl_active(cpu, &bundle.syllables[j]),
-        spec_bundle_gpr_hazard_free::<W>(bundle),
+        spec_bundle_gpr_hazard_free(bundle),
     ensures
-        spec_gpr_pair_ok_in::<W>(bundle, i, j),
+        spec_gpr_pair_ok_in(bundle, i, j),
 {
-    assert(spec_gpr_pair_ok_in::<W>(bundle, i, j));
+    assert(spec_gpr_pair_ok_in(bundle, i, j));
 }
 
 /// Predicate-hazard conservatism: unconditional pred-hazard-free implies active-pair pred-hazard-free.
-pub proof fn lemma_pred_hazard_free_implies_active_pair_ok<const W: usize>(
-    bundle: &Bundle<W>,
-    cpu: &CpuState<W>,
+pub proof fn lemma_pred_hazard_free_implies_active_pair_ok(
+    bundle: &Bundle,
+    cpu: &CpuState,
     i: int,
     j: int,
 )
@@ -439,11 +439,11 @@ pub proof fn lemma_pred_hazard_free_implies_active_pair_ok<const W: usize>(
         j < bundle.syllables.len(),
         crate::cpu::spec_syl_active(cpu, &bundle.syllables[i]),
         crate::cpu::spec_syl_active(cpu, &bundle.syllables[j]),
-        spec_bundle_pred_hazard_free::<W>(bundle),
+        spec_bundle_pred_hazard_free(bundle),
     ensures
-        spec_pred_pair_ok_in::<W>(bundle, i, j),
+        spec_pred_pair_ok_in(bundle, i, j),
 {
-    assert(spec_pred_pair_ok_in::<W>(bundle, i, j));
+    assert(spec_pred_pair_ok_in(bundle, i, j));
 }
 
 // --- Public entry point ---
@@ -454,26 +454,26 @@ pub proof fn lemma_pred_hazard_free_implies_active_pair_ok<const W: usize>(
 /// states what an empty result guarantees: every bundle satisfies the conservative
 /// spec predicates whose soundness is proved by the lemmas above.
 #[verifier::external_body]
-pub fn verify_program<const W: usize>(
-    program: &[Bundle<W>],
+pub fn verify_program(
+    program: &[Bundle],
     latencies: &LatencyTable,
 ) -> (ret: Vec<Diagnostic>)
     ensures
         ret.len() == 0 ==> forall|k: int| 0 <= k < program.len() ==>
-            #[trigger] spec_bundle_slot_ok::<W>(&program[k]) &&
-            spec_bundle_gpr_hazard_free::<W>(&program[k]) &&
-            spec_bundle_pred_hazard_free::<W>(&program[k]),
+            #[trigger] spec_bundle_slot_ok(&program[k]) &&
+            spec_bundle_gpr_hazard_free(&program[k]) &&
+            spec_bundle_pred_hazard_free(&program[k]),
 {
     let mut diags = Vec::new();
     let mut ready_at = vec![0u64; NUM_GPRS];
 
     for (bidx, bundle) in program.iter().enumerate() {
         let issue_cycle = bidx as u64;
-        check_slot_legality::<W>(bidx, bundle, &mut diags);
-        check_gpr_hazards::<W>(bidx, bundle, &mut diags);
-        check_pred_hazards::<W>(bidx, bundle, &mut diags);
-        check_gpr_timing::<W>(bidx, bundle, issue_cycle, &ready_at, &mut diags);
-        update_ready_at::<W>(bundle, issue_cycle, latencies, &mut ready_at);
+        check_slot_legality(bidx, bundle, &mut diags);
+        check_gpr_hazards(bidx, bundle, &mut diags);
+        check_pred_hazards(bidx, bundle, &mut diags);
+        check_gpr_timing(bidx, bundle, issue_cycle, &ready_at, &mut diags);
+        update_ready_at(bundle, issue_cycle, latencies, &mut ready_at);
     }
 
     diags

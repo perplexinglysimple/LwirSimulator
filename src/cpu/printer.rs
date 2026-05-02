@@ -2,8 +2,8 @@ verus! {
 
 /// Pretty-print the processor state.
 #[verifier::external]
-pub fn print_cpu_state<const W: usize>(state: &CpuState<W>) {
-    println!("=== LWIR Processor State (width={W}) ===");
+pub fn print_cpu_state(state: &CpuState) {
+    println!("=== LWIR Processor State (width={}) ===", state.width);
     println!("  PC: {}  Cycle: {}  Halted: {}", state.pc, state.cycle, state.halted);
     println!("  GPRs:");
     for (i, v) in state.gprs.iter().enumerate() {

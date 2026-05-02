@@ -1,5 +1,23 @@
-.width 4
+.processor {
+  width 4
 
+  hardware {
+    unit alu = integer_alu
+    unit mem = memory
+    unit ctrl = control
+    unit mul = multiplier
+  }
+
+  layout slots {
+    0 = { alu }
+    1 = { alu }
+    2 = { mem }
+    3 = { ctrl, mul }
+  }
+
+  cache { }
+  topology { cpus 1 }
+}
 # Illegal: same-bundle RAW hazard (I1 reads r1 written by I0 in same bundle).
 {
   i0: movi r1, 42

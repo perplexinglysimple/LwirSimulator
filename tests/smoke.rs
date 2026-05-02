@@ -6,6 +6,21 @@ use lwir_simulator::latency::LatencyTable;
 
 const W: usize = 4;
 
+fn processor_header(width: usize) -> String {
+    let mut slots = String::new();
+    for slot in 0..width {
+        let units = match slot % 4 {
+            0 | 1 => "alu",
+            2 => "mem",
+            _ => "ctrl, mul",
+        };
+        slots.push_str(&format!("    {slot} = {{ {units} }}\n"));
+    }
+    format!(
+        ".processor {{\n  width {width}\n\n  hardware {{\n    unit alu = integer_alu\n    unit mem = memory\n    unit ctrl = control\n    unit mul = multiplier\n  }}\n\n  layout slots {{\n{slots}  }}\n\n  cache {{ }}\n  topology {{ cpus 1 }}\n}}\n"
+    )
+}
+
 fn mov_imm(dst: usize, imm: i64) -> Syllable {
     Syllable {
         opcode: Opcode::MovImm,
@@ -142,18 +157,18 @@ fn sparse_latency_table() -> LatencyTable {
     LatencyTable { entries: vec![] }
 }
 
-fn hello_world_program() -> Vec<Bundle<W>> {
-    let mut b0 = Bundle::<W>::nop_bundle();
+fn hello_world_program() -> Vec<Bundle> {
+    let mut b0 = Bundle::nop_bundle(W);
     b0.set_slot(0, mov_imm(1, 6));
     b0.set_slot(1, mov_imm(2, 7));
 
-    let mut b1 = Bundle::<W>::nop_bundle();
+    let mut b1 = Bundle::nop_bundle(W);
     b1.set_slot(3, mul(3, 1, 2));
 
-    let mut b2 = Bundle::<W>::nop_bundle();
+    let mut b2 = Bundle::nop_bundle(W);
     b2.set_slot(2, store_d(0, 3, 0x100));
 
-    let mut b3 = Bundle::<W>::nop_bundle();
+    let mut b3 = Bundle::nop_bundle(W);
     b3.set_slot(3, ret());
 
     vec![b0, b1, b2, b3]
@@ -165,7 +180,7 @@ fn hello_world_program_completes_and_writes_result() {
     latencies.set(Opcode::Mul, 5);
 
     let program = hello_world_program();
-    let mut cpu = CpuState::<W>::new(latencies);
+    let mut cpu = CpuState::new(W, latencies);
 
     while cpu.step(&program) {}
 
@@ -181,7 +196,7 @@ fn hello_world_program_completes_and_writes_result() {
 
 #[test]
 fn register_zero_and_predicate_zero_are_hardwired() {
-    let mut cpu = CpuState::<W>::new(LatencyTable::default());
+    let mut cpu = CpuState::new(W, LatencyTable::default());
 
     cpu.write_gpr(0, 99);
     cpu.write_pred(0, false);
@@ -192,9 +207,9 @@ fn register_zero_and_predicate_zero_are_hardwired() {
 
 #[test]
 fn illegal_bundle_wrong_slot_halts_before_execution() {
-    let mut cpu = CpuState::<W>::new(LatencyTable::default());
+    let mut cpu = CpuState::new(W, LatencyTable::default());
 
-    let mut bad = Bundle::<W>::nop_bundle();
+    let mut bad = Bundle::nop_bundle(W);
     bad.set_slot(0, ret());
     let program = vec![bad];
 
@@ -206,9 +221,9 @@ fn illegal_bundle_wrong_slot_halts_before_execution() {
 
 #[test]
 fn illegal_same_bundle_raw_halts_before_execution() {
-    let mut cpu = CpuState::<W>::new(LatencyTable::default());
+    let mut cpu = CpuState::new(W, LatencyTable::default());
 
-    let mut bad = Bundle::<W>::nop_bundle();
+    let mut bad = Bundle::nop_bundle(W);
     bad.set_slot(0, mov_imm(1, 6));
     bad.set_slot(1, Syllable {
         opcode: Opcode::Add,
@@ -233,17 +248,17 @@ fn scoreboard_stalls_until_producer_ready() {
     let mut latencies = LatencyTable::default();
     latencies.set(Opcode::Mul, 5);
 
-    let mut cpu = CpuState::<W>::new(latencies);
+    let mut cpu = CpuState::new(W, latencies);
     cpu.write_gpr(1, 6);
     cpu.write_gpr(2, 7);
 
-    let mut b0 = Bundle::<W>::nop_bundle();
+    let mut b0 = Bundle::nop_bundle(W);
     b0.set_slot(3, mul(3, 1, 2));
 
-    let mut b1 = Bundle::<W>::nop_bundle();
+    let mut b1 = Bundle::nop_bundle(W);
     b1.set_slot(2, store_d(0, 3, 0x100));
 
-    let mut b2 = Bundle::<W>::nop_bundle();
+    let mut b2 = Bundle::nop_bundle(W);
     b2.set_slot(3, ret());
 
     let program = vec![b0, b1, b2];
@@ -280,7 +295,7 @@ fn scoreboard_stalls_until_producer_ready() {
 
 #[test]
 fn shifts_and_load_widths_behave_as_expected() {
-    let mut cpu = CpuState::<W>::new(LatencyTable::default());
+    let mut cpu = CpuState::new(W, LatencyTable::default());
     cpu.write_gpr(1, 0xf000_0000_0000_0000);
     cpu.write_gpr(2, 4);
 
@@ -293,7 +308,7 @@ fn shifts_and_load_widths_behave_as_expected() {
     cpu.memory[0x126] = 0x22;
     cpu.memory[0x127] = 0x11;
 
-    let mut b0 = Bundle::<W>::nop_bundle();
+    let mut b0 = Bundle::nop_bundle(W);
     b0.set_slot(0, Syllable {
         opcode: Opcode::Shl,
         dst: Some(3),
@@ -303,7 +318,7 @@ fn shifts_and_load_widths_behave_as_expected() {
         pred_negated: false,
     });
 
-    let mut b1 = Bundle::<W>::nop_bundle();
+    let mut b1 = Bundle::nop_bundle(W);
     b1.set_slot(0, Syllable {
         opcode: Opcode::Srl,
         dst: Some(4),
@@ -313,7 +328,7 @@ fn shifts_and_load_widths_behave_as_expected() {
         pred_negated: false,
     });
 
-    let mut b2 = Bundle::<W>::nop_bundle();
+    let mut b2 = Bundle::nop_bundle(W);
     b2.set_slot(0, Syllable {
         opcode: Opcode::Sra,
         dst: Some(5),
@@ -323,19 +338,19 @@ fn shifts_and_load_widths_behave_as_expected() {
         pred_negated: false,
     });
 
-    let mut b3 = Bundle::<W>::nop_bundle();
+    let mut b3 = Bundle::nop_bundle(W);
     b3.set_slot(2, load_b(6, 0, 0x120));
 
-    let mut b4 = Bundle::<W>::nop_bundle();
+    let mut b4 = Bundle::nop_bundle(W);
     b4.set_slot(2, load_h(7, 0, 0x120));
 
-    let mut b5 = Bundle::<W>::nop_bundle();
+    let mut b5 = Bundle::nop_bundle(W);
     b5.set_slot(2, load_w(8, 0, 0x120));
 
-    let mut b6 = Bundle::<W>::nop_bundle();
+    let mut b6 = Bundle::nop_bundle(W);
     b6.set_slot(2, load_d(9, 0, 0x120));
 
-    let mut b7 = Bundle::<W>::nop_bundle();
+    let mut b7 = Bundle::nop_bundle(W);
     b7.set_slot(3, ret());
 
     let program = vec![b0, b1, b2, b3, b4, b5, b6, b7];
@@ -352,25 +367,25 @@ fn shifts_and_load_widths_behave_as_expected() {
 
 #[test]
 fn predicate_logic_and_branch_control_skip_work() {
-    let mut cpu = CpuState::<W>::new(LatencyTable::default());
+    let mut cpu = CpuState::new(W, LatencyTable::default());
 
-    let mut b0 = Bundle::<W>::nop_bundle();
+    let mut b0 = Bundle::nop_bundle(W);
     b0.set_slot(0, mov_imm(1, 5));
     b0.set_slot(1, mov_imm(2, 7));
 
-    let mut b1 = Bundle::<W>::nop_bundle();
+    let mut b1 = Bundle::nop_bundle(W);
     b1.set_slot(0, cmp_lt(1, 1, 2));
 
-    let mut b2 = Bundle::<W>::nop_bundle();
+    let mut b2 = Bundle::nop_bundle(W);
     b2.set_slot(3, p_not(2, 1));
 
-    let mut b3 = Bundle::<W>::nop_bundle();
+    let mut b3 = Bundle::nop_bundle(W);
     b3.set_slot(3, branch(2, true, 5));
 
-    let mut b4 = Bundle::<W>::nop_bundle();
+    let mut b4 = Bundle::nop_bundle(W);
     b4.set_slot(0, mov_imm(3, 99));
 
-    let mut b5 = Bundle::<W>::nop_bundle();
+    let mut b5 = Bundle::nop_bundle(W);
     b5.set_slot(3, ret());
 
     let program = vec![b0, b1, b2, b3, b4, b5];
@@ -384,16 +399,16 @@ fn predicate_logic_and_branch_control_skip_work() {
 
 #[test]
 fn call_and_return_follow_link_register() {
-    let mut cpu = CpuState::<W>::new(LatencyTable::default());
+    let mut cpu = CpuState::new(W, LatencyTable::default());
 
-    let mut b0 = Bundle::<W>::nop_bundle();
+    let mut b0 = Bundle::nop_bundle(W);
     b0.set_slot(3, call(2));
 
-    let mut b1 = Bundle::<W>::nop_bundle();
+    let mut b1 = Bundle::nop_bundle(W);
     b1.set_slot(0, mov_imm(5, 1));
     b1.set_slot(1, mov_imm(31, 0));
 
-    let mut b2 = Bundle::<W>::nop_bundle();
+    let mut b2 = Bundle::nop_bundle(W);
     b2.set_slot(0, mov_imm(6, 2));
     b2.set_slot(3, ret());
 
@@ -442,9 +457,7 @@ fn main_binary_requires_program_path() {
 
 #[test]
 fn deterministic_trace_records_scheduler_visible_events() {
-    let source = r#"
-.width 4
-
+    let source = format!("{}{}", processor_header(W), r#"
 {
   I0: movi r1, 6
   I1: movi r2, 7
@@ -510,12 +523,12 @@ worker:
   M : ldd r4, [r0 + 0x100]
   X : ret
 }
-"#;
+"#);
 
-    let program = parse_program::<W>(source).expect("trace program should parse");
+    let program = parse_program(&source).expect("trace program should parse");
     let mut latencies = LatencyTable::default();
     latencies.set(Opcode::Mul, 5);
-    let mut cpu = CpuState::<W>::new(latencies);
+    let mut cpu = CpuState::new(W, latencies);
 
     let trace = cpu.trace_program(&program);
     let rendered = trace.to_string();
@@ -552,7 +565,7 @@ fn main_binary_trace_mode_emits_stable_log() {
 
 #[test]
 fn bundle_helpers_preserve_expected_structure() {
-    let mut bundle = Bundle::<W>::nop_bundle();
+    let mut bundle = Bundle::nop_bundle(W);
 
     assert_eq!(bundle.width(), W);
     assert!(bundle.is_all_nop());
@@ -588,16 +601,16 @@ fn latency_table_defaults_and_overrides_are_visible() {
 
 #[test]
 fn opcode_matrix_covers_remaining_execution_paths() {
-    let mut cpu = CpuState::<W>::new(LatencyTable::default());
+    let mut cpu = CpuState::new(W, LatencyTable::default());
     cpu.write_gpr(11, u64::MAX);
     cpu.write_gpr(12, 2);
     cpu.write_gpr(13, 0x1122_3344_5566_7788);
 
-    let mut b0 = Bundle::<W>::nop_bundle();
+    let mut b0 = Bundle::nop_bundle(W);
     b0.set_slot(0, mov_imm(1, 0x55));
     b0.set_slot(1, mov_imm(2, 0x0f));
 
-    let mut b1 = Bundle::<W>::nop_bundle();
+    let mut b1 = Bundle::nop_bundle(W);
     b1.set_slot(0, Syllable {
         opcode: Opcode::Add,
         dst: Some(3),
@@ -615,7 +628,7 @@ fn opcode_matrix_covers_remaining_execution_paths() {
         pred_negated: false,
     });
 
-    let mut b2 = Bundle::<W>::nop_bundle();
+    let mut b2 = Bundle::nop_bundle(W);
     b2.set_slot(0, Syllable {
         opcode: Opcode::And,
         dst: Some(5),
@@ -633,7 +646,7 @@ fn opcode_matrix_covers_remaining_execution_paths() {
         pred_negated: false,
     });
 
-    let mut b3 = Bundle::<W>::nop_bundle();
+    let mut b3 = Bundle::nop_bundle(W);
     b3.set_slot(0, Syllable {
         opcode: Opcode::Xor,
         dst: Some(7),
@@ -651,7 +664,7 @@ fn opcode_matrix_covers_remaining_execution_paths() {
         pred_negated: false,
     });
 
-    let mut b4 = Bundle::<W>::nop_bundle();
+    let mut b4 = Bundle::nop_bundle(W);
     b4.set_slot(2, Syllable {
         opcode: Opcode::Lea,
         dst: Some(9),
@@ -661,7 +674,7 @@ fn opcode_matrix_covers_remaining_execution_paths() {
         pred_negated: false,
     });
 
-    let mut b5 = Bundle::<W>::nop_bundle();
+    let mut b5 = Bundle::nop_bundle(W);
     b5.set_slot(2, Syllable {
         opcode: Opcode::Prefetch,
         dst: None,
@@ -671,7 +684,7 @@ fn opcode_matrix_covers_remaining_execution_paths() {
         pred_negated: false,
     });
 
-    let mut b6 = Bundle::<W>::nop_bundle();
+    let mut b6 = Bundle::nop_bundle(W);
     b6.set_slot(3, Syllable {
         opcode: Opcode::MulH,
         dst: Some(10),
@@ -681,7 +694,7 @@ fn opcode_matrix_covers_remaining_execution_paths() {
         pred_negated: false,
     });
 
-    let mut b7 = Bundle::<W>::nop_bundle();
+    let mut b7 = Bundle::nop_bundle(W);
     b7.set_slot(2, Syllable {
         opcode: Opcode::StoreB,
         dst: None,
@@ -691,7 +704,7 @@ fn opcode_matrix_covers_remaining_execution_paths() {
         pred_negated: false,
     });
 
-    let mut b8 = Bundle::<W>::nop_bundle();
+    let mut b8 = Bundle::nop_bundle(W);
     b8.set_slot(2, Syllable {
         opcode: Opcode::StoreH,
         dst: None,
@@ -701,7 +714,7 @@ fn opcode_matrix_covers_remaining_execution_paths() {
         pred_negated: false,
     });
 
-    let mut b9 = Bundle::<W>::nop_bundle();
+    let mut b9 = Bundle::nop_bundle(W);
     b9.set_slot(2, Syllable {
         opcode: Opcode::StoreW,
         dst: None,
@@ -711,7 +724,7 @@ fn opcode_matrix_covers_remaining_execution_paths() {
         pred_negated: false,
     });
 
-    let mut b10 = Bundle::<W>::nop_bundle();
+    let mut b10 = Bundle::nop_bundle(W);
     b10.set_slot(0, Syllable {
         opcode: Opcode::CmpEq,
         dst: Some(1),
@@ -721,7 +734,7 @@ fn opcode_matrix_covers_remaining_execution_paths() {
         pred_negated: false,
     });
 
-    let mut b11 = Bundle::<W>::nop_bundle();
+    let mut b11 = Bundle::nop_bundle(W);
     b11.set_slot(0, Syllable {
         opcode: Opcode::CmpUlt,
         dst: Some(2),
@@ -731,7 +744,7 @@ fn opcode_matrix_covers_remaining_execution_paths() {
         pred_negated: false,
     });
 
-    let mut b12 = Bundle::<W>::nop_bundle();
+    let mut b12 = Bundle::nop_bundle(W);
     b12.set_slot(3, Syllable {
         opcode: Opcode::PAnd,
         dst: Some(3),
@@ -741,7 +754,7 @@ fn opcode_matrix_covers_remaining_execution_paths() {
         pred_negated: false,
     });
 
-    let mut b13 = Bundle::<W>::nop_bundle();
+    let mut b13 = Bundle::nop_bundle(W);
     b13.set_slot(3, Syllable {
         opcode: Opcode::POr,
         dst: Some(4),
@@ -751,7 +764,7 @@ fn opcode_matrix_covers_remaining_execution_paths() {
         pred_negated: false,
     });
 
-    let mut b14 = Bundle::<W>::nop_bundle();
+    let mut b14 = Bundle::nop_bundle(W);
     b14.set_slot(3, Syllable {
         opcode: Opcode::PXor,
         dst: Some(5),
@@ -761,7 +774,7 @@ fn opcode_matrix_covers_remaining_execution_paths() {
         pred_negated: false,
     });
 
-    let mut b15 = Bundle::<W>::nop_bundle();
+    let mut b15 = Bundle::nop_bundle(W);
     b15.set_slot(3, Syllable {
         opcode: Opcode::Jump,
         dst: None,
@@ -771,10 +784,10 @@ fn opcode_matrix_covers_remaining_execution_paths() {
         pred_negated: false,
     });
 
-    let mut b16 = Bundle::<W>::nop_bundle();
+    let mut b16 = Bundle::nop_bundle(W);
     b16.set_slot(0, mov_imm(14, 999));
 
-    let mut b17 = Bundle::<W>::nop_bundle();
+    let mut b17 = Bundle::nop_bundle(W);
     b17.set_slot(3, ret());
 
     let program = vec![
@@ -812,9 +825,9 @@ fn opcode_matrix_covers_remaining_execution_paths() {
 
 #[test]
 fn illegal_same_bundle_gpr_waw_halts_before_execution() {
-    let mut cpu = CpuState::<W>::new(LatencyTable::default());
+    let mut cpu = CpuState::new(W, LatencyTable::default());
 
-    let mut bad = Bundle::<W>::nop_bundle();
+    let mut bad = Bundle::nop_bundle(W);
     bad.set_slot(0, mov_imm(1, 6));
     bad.set_slot(1, mov_imm(1, 7));
     let program = vec![bad];
@@ -827,9 +840,9 @@ fn illegal_same_bundle_gpr_waw_halts_before_execution() {
 
 #[test]
 fn illegal_same_bundle_ret_dependency_halts_before_execution() {
-    let mut cpu = CpuState::<W>::new(LatencyTable::default());
+    let mut cpu = CpuState::new(W, LatencyTable::default());
 
-    let mut bad = Bundle::<W>::nop_bundle();
+    let mut bad = Bundle::nop_bundle(W);
     bad.set_slot(0, mov_imm(31, 2));
     bad.set_slot(3, ret());
     let program = vec![bad];
@@ -843,9 +856,9 @@ fn illegal_same_bundle_ret_dependency_halts_before_execution() {
 #[test]
 fn illegal_same_bundle_call_ret_dependency_halts_wide_bundle() {
     const W8: usize = 8;
-    let mut cpu = CpuState::<W8>::new(LatencyTable::default());
+    let mut cpu = CpuState::new(W8, LatencyTable::default());
 
-    let mut bad = Bundle::<W8>::nop_bundle();
+    let mut bad = Bundle::nop_bundle(W8);
     bad.set_slot(3, call(0));
     bad.set_slot(7, ret());
     let program = vec![bad];
@@ -859,10 +872,10 @@ fn illegal_same_bundle_call_ret_dependency_halts_wide_bundle() {
 
 #[test]
 fn illegal_same_bundle_predicate_raw_halts_before_execution() {
-    let mut cpu = CpuState::<W>::new(LatencyTable::default());
+    let mut cpu = CpuState::new(W, LatencyTable::default());
     cpu.write_pred(1, true);
 
-    let mut bad = Bundle::<W>::nop_bundle();
+    let mut bad = Bundle::nop_bundle(W);
     bad.set_slot(0, cmp_lt(1, 0, 0));
     bad.set_slot(3, branch(1, false, 0));
     let program = vec![bad];
@@ -874,9 +887,9 @@ fn illegal_same_bundle_predicate_raw_halts_before_execution() {
 
 #[test]
 fn illegal_same_bundle_predicate_waw_halts_before_execution() {
-    let mut cpu = CpuState::<W>::new(LatencyTable::default());
+    let mut cpu = CpuState::new(W, LatencyTable::default());
 
-    let mut bad = Bundle::<W>::nop_bundle();
+    let mut bad = Bundle::nop_bundle(W);
     bad.set_slot(0, cmp_lt(1, 0, 0));
     bad.set_slot(3, p_not(1, 0));
     let program = vec![bad];
@@ -891,12 +904,12 @@ fn ret_stalls_until_link_register_ready() {
     let mut latencies = LatencyTable::default();
     latencies.set(Opcode::MovImm, 3);
 
-    let mut cpu = CpuState::<W>::new(latencies);
+    let mut cpu = CpuState::new(W, latencies);
 
-    let mut b0 = Bundle::<W>::nop_bundle();
+    let mut b0 = Bundle::nop_bundle(W);
     b0.set_slot(1, mov_imm(31, 3));
 
-    let mut b1 = Bundle::<W>::nop_bundle();
+    let mut b1 = Bundle::nop_bundle(W);
     b1.set_slot(3, ret());
 
     let program = vec![b0, b1];
@@ -930,12 +943,12 @@ fn ret_stalls_until_call_link_register_ready() {
     let mut latencies = LatencyTable::default();
     latencies.set(Opcode::Call, 3);
 
-    let mut cpu = CpuState::<W>::new(latencies);
+    let mut cpu = CpuState::new(W, latencies);
 
-    let mut b0 = Bundle::<W>::nop_bundle();
+    let mut b0 = Bundle::nop_bundle(W);
     b0.set_slot(3, call(1));
 
-    let mut b1 = Bundle::<W>::nop_bundle();
+    let mut b1 = Bundle::nop_bundle(W);
     b1.set_slot(3, ret());
 
     let program = vec![b0, b1];
@@ -960,18 +973,18 @@ fn ret_stalls_until_call_link_register_ready() {
 
 #[test]
 fn out_of_bounds_loads_return_zero() {
-    let mut cpu = CpuState::<W>::new(LatencyTable::default());
+    let mut cpu = CpuState::new(W, LatencyTable::default());
 
-    let mut b0 = Bundle::<W>::nop_bundle();
+    let mut b0 = Bundle::nop_bundle(W);
     b0.set_slot(2, load_h(1, 0, 65535));
 
-    let mut b1 = Bundle::<W>::nop_bundle();
+    let mut b1 = Bundle::nop_bundle(W);
     b1.set_slot(2, load_w(2, 0, 65533));
 
-    let mut b2 = Bundle::<W>::nop_bundle();
+    let mut b2 = Bundle::nop_bundle(W);
     b2.set_slot(2, load_d(3, 0, 65529));
 
-    let mut b3 = Bundle::<W>::nop_bundle();
+    let mut b3 = Bundle::nop_bundle(W);
     b3.set_slot(3, ret());
 
     let program = vec![b0, b1, b2, b3];
@@ -984,9 +997,9 @@ fn out_of_bounds_loads_return_zero() {
 
 #[test]
 fn predicate_ops_with_none_sources_use_false_default() {
-    let mut cpu = CpuState::<W>::new(LatencyTable::default());
+    let mut cpu = CpuState::new(W, LatencyTable::default());
 
-    let mut b0 = Bundle::<W>::nop_bundle();
+    let mut b0 = Bundle::nop_bundle(W);
     b0.set_slot(3, Syllable {
         opcode: Opcode::PNot,
         dst: Some(1),
@@ -996,7 +1009,7 @@ fn predicate_ops_with_none_sources_use_false_default() {
         pred_negated: false,
     });
 
-    let mut b1 = Bundle::<W>::nop_bundle();
+    let mut b1 = Bundle::nop_bundle(W);
     b1.set_slot(3, Syllable {
         opcode: Opcode::PAnd,
         dst: Some(2),
@@ -1006,7 +1019,7 @@ fn predicate_ops_with_none_sources_use_false_default() {
         pred_negated: false,
     });
 
-    let mut b2 = Bundle::<W>::nop_bundle();
+    let mut b2 = Bundle::nop_bundle(W);
     b2.set_slot(3, ret());
 
     let program = vec![b0, b1, b2];

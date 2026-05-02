@@ -18,24 +18,7 @@
   cache { }
   topology { cpus 1 }
 }
-entry:
-{
-  i0: movi r1, 6
-  i1: movi r2, 7
-  m : nop
-  x : nop
-}
 
-{
-  i0: nop
-  i1: nop
-  m : nop
-  x : mul r3, r1, r2
-}
-
-{
-  i0: nop
-  i1: nop
-  m : std [r0 + 0x100], r3
-  x : ret
-}
+i0 movi r1, 6 | i1 movi r2, 7
+x mul r3, r1, r2
+x ret

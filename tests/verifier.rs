@@ -10,8 +10,23 @@ const W: usize = 4;
 // Helpers
 // ---------------------------------------------------------------------------
 
-fn nop_bundle() -> Bundle<W> {
-    Bundle::<W>::nop_bundle()
+fn nop_bundle() -> Bundle {
+    Bundle::nop_bundle(W)
+}
+
+fn processor_header(width: usize) -> String {
+    let mut slots = String::new();
+    for slot in 0..width {
+        let units = match slot % 4 {
+            0 | 1 => "alu",
+            2 => "mem",
+            _ => "ctrl, mul",
+        };
+        slots.push_str(&format!("    {slot} = {{ {units} }}\n"));
+    }
+    format!(
+        ".processor {{\n  width {width}\n\n  hardware {{\n    unit alu = integer_alu\n    unit mem = memory\n    unit ctrl = control\n    unit mul = multiplier\n  }}\n\n  layout slots {{\n{slots}  }}\n\n  cache {{ }}\n  topology {{ cpus 1 }}\n}}\n"
+    )
 }
 
 fn syl(opcode: Opcode, dst: Option<usize>, src0: Option<usize>, src1: Option<usize>, imm: i64) -> Syllable {
@@ -127,7 +142,7 @@ fn nop_in_any_slot_is_legal() {
 #[test]
 fn slot_legality_example_file_is_flagged() {
     let source = std::fs::read_to_string("examples/illegal_wrong_slot.lwir").unwrap();
-    let program = parse_program::<W>(&source).unwrap();
+    let program = parse_program(&source).unwrap();
     let diags = verify_program(&program, &LatencyTable::default());
     assert!(has_rule(&diags, Rule::SlotOpcodeLegality), "{diags:?}");
 }
@@ -158,7 +173,7 @@ fn detects_same_bundle_raw_via_ret_reads_link_reg() {
 
 #[test]
 fn detects_same_bundle_raw_via_call_then_ret_in_wide_bundle() {
-    let mut b = Bundle::<8>::nop_bundle();
+    let mut b = Bundle::nop_bundle(8);
     b.set_slot(3, call(0)); // slot 3 implicitly writes r31 (link)
     b.set_slot(7, ret());   // slot 7 ret implicitly reads r31
     let program = vec![b];
@@ -169,7 +184,7 @@ fn detects_same_bundle_raw_via_call_then_ret_in_wide_bundle() {
 #[test]
 fn raw_example_file_is_flagged() {
     let source = std::fs::read_to_string("examples/illegal_raw_same_bundle.lwir").unwrap();
-    let program = parse_program::<W>(&source).unwrap();
+    let program = parse_program(&source).unwrap();
     let diags = verify_program(&program, &LatencyTable::default());
     assert!(has_rule(&diags, Rule::SameBundleGprRaw), "{diags:?}");
 }
@@ -201,7 +216,7 @@ fn waw_on_r0_is_not_flagged() {
 
 #[test]
 fn detects_same_bundle_waw_via_call_and_explicit_link_write_in_wide_bundle() {
-    let mut b = Bundle::<8>::nop_bundle();
+    let mut b = Bundle::nop_bundle(8);
     b.set_slot(3, call(0));      // slot 3 implicitly writes r31
     b.set_slot(4, movi(31, 0));  // slot 4 also writes r31
     let program = vec![b];
@@ -356,7 +371,7 @@ fn detects_timing_violation_via_call_link_register_write() {
 fn detects_timing_violation_in_hello_lwir() {
     // hello.lwir: mul r3 at bundle 1 (lat=3), store r3 at bundle 2 — not enough gap.
     let source = std::fs::read_to_string("examples/hello.lwir").unwrap();
-    let program = parse_program::<W>(&source).unwrap();
+    let program = parse_program(&source).unwrap();
     let diags = verify_program(&program, &LatencyTable::default());
     assert!(has_rule(&diags, Rule::GprReadyCycle), "{diags:?}");
 }
@@ -368,14 +383,14 @@ fn detects_timing_violation_in_hello_lwir() {
 #[test]
 fn clean_program_produces_no_diagnostics() {
     let source = std::fs::read_to_string("examples/clean_schedule.lwir").unwrap();
-    let program = parse_program::<W>(&source).unwrap();
+    let program = parse_program(&source).unwrap();
     let diags = verify_program(&program, &LatencyTable::default());
     assert!(diags.is_empty(), "expected clean program but got: {diags:?}");
 }
 
 #[test]
 fn empty_program_is_clean() {
-    let program: Vec<Bundle<W>> = vec![];
+    let program: Vec<Bundle> = vec![];
     let diags = verify_program(&program, &LatencyTable::default());
     assert!(diags.is_empty(), "{diags:?}");
 }
@@ -407,13 +422,13 @@ fn verifier_binary_exits_clean_on_clean_program() {
 fn verifier_binary_accepts_width_8_program() {
     let path = write_temp_lwir(
         "width8-clean",
-        r#".width 8
+        &format!("{}{}", processor_header(8), r#"
 {
   0: movi r1, 1
   4: movi r2, 2
   7: ret
 }
-"#,
+"#),
     );
 
     let out = std::process::Command::new(env!("CARGO_BIN_EXE_lwir_verify"))
@@ -481,6 +496,7 @@ fn verifier_binary_prints_bundle_count_and_header() {
 #[test]
 fn backend_legal_fixtures_are_clean() {
     assert_clean_fixture::<4>("examples/fixtures/legal/w4_control_pred_mem_latency.lwir");
+    assert_clean_fixture::<4>("examples/fixtures/legal/w4_composed_slot.lwir");
     assert_clean_fixture::<8>("examples/fixtures/legal/w8_pred_mem_latency.lwir");
     assert_clean_fixture::<16>("examples/fixtures/legal/w16_call_mem_latency.lwir");
 }
@@ -501,16 +517,29 @@ fn backend_illegal_fixtures_report_expected_rules() {
     );
 }
 
+#[test]
+fn processor_layout_parse_error_fixtures_are_rejected() {
+    for path in [
+        "examples/fixtures/illegal/w4_no_processor_header.lwir",
+        "examples/fixtures/illegal/w4_unknown_unit.lwir",
+        "examples/fixtures/illegal/w4_layout_width_mismatch.lwir",
+    ] {
+        let source = std::fs::read_to_string(path).unwrap();
+        let err = parse_program(&source).expect_err("fixture should fail during parsing");
+        assert!(err.contains("processor") || err.contains("layout"), "{path}: {err}");
+    }
+}
+
 fn assert_clean_fixture<const WIDTH: usize>(path: &str) {
     let source = std::fs::read_to_string(path).unwrap();
-    let program = parse_program::<WIDTH>(&source).unwrap();
+    let program = parse_program(&source).unwrap();
     let diags = verify_program(&program, &LatencyTable::default());
     assert!(diags.is_empty(), "{path} should be clean but got: {diags:?}");
 }
 
 fn assert_illegal_fixture<const WIDTH: usize>(path: &str, expected_rules: &[Rule]) {
     let source = std::fs::read_to_string(path).unwrap();
-    let program = parse_program::<WIDTH>(&source).unwrap();
+    let program = parse_program(&source).unwrap();
     let diags = verify_program(&program, &LatencyTable::default());
     assert!(!diags.is_empty(), "{path} should produce verifier diagnostics");
 

@@ -18,7 +18,8 @@ pub struct ScoreboardEntry {
 
 /// Full architectural state — all fields pub so callers can snapshot freely.
 #[derive(Clone, Debug)]
-pub struct CpuState<const W: usize> {
+pub struct CpuState {
+    pub width:      usize,
     pub gprs:       Vec<u64>,
     pub preds:      Vec<bool>,
     pub pc:         usize,

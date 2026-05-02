@@ -1,5 +1,9 @@
 use crate::bundle::Bundle;
 use crate::isa::{Opcode, Syllable};
+use crate::layout::{
+    program_layout_compatible_runtime, CacheConfig, ProcessorLayout, SlotSpec, TopologyConfig, UnitDecl, UnitKind,
+};
+use crate::program::Program;
 use std::collections::HashMap;
 
 #[derive(Clone, Debug)]
@@ -9,10 +13,17 @@ struct ParsedBundleLine {
     text: String,
 }
 
-pub fn parse_program<const W: usize>(text: &str) -> Result<Vec<Bundle<W>>, String> {
-    let parsed_lines = collect_lines::<W>(text)?;
+const PROCESSOR_DOC_HINT: &str = "processor layout headers are mandatory; see docs/processor_layout_plan.md";
+
+pub fn parse_program(text: &str) -> Result<Program, String> {
+    let (layout, body_start) = parse_processor_header(text)?;
+    if !layout.validate() {
+        return Err("invalid processor layout; see docs/processor_layout_plan.md".to_string());
+    }
+    let body = text.lines().skip(body_start).collect::<Vec<_>>().join("\n");
+    let parsed_lines = collect_lines(&body)?;
     let mut program =
-        vec![Bundle::<W>::nop_bundle(); parsed_lines.iter().map(|l| l.bundle_index).max().map_or(0, |i| i + 1)];
+        vec![Bundle::nop_bundle(layout.width); parsed_lines.iter().map(|l| l.bundle_index).max().map_or(0, |i| i + 1)];
 
     for parsed in parsed_lines {
         for part in parsed.text.split('|') {
@@ -20,15 +31,231 @@ pub fn parse_program<const W: usize>(text: &str) -> Result<Vec<Bundle<W>>, Strin
             if part.is_empty() {
                 continue;
             }
-            let (slot, syllable) = parse_instruction::<W>(part, parsed.line_no)?;
+            let (slot, syllable) = parse_instruction(part, parsed.line_no, layout.width)?;
             program[parsed.bundle_index].set_slot(slot, syllable);
         }
     }
 
-    Ok(program)
+    let _layout_compatible = program_layout_compatible_runtime(&layout, &program);
+
+    Ok(Program { layout, bundles: program })
 }
 
-fn collect_lines<const W: usize>(text: &str) -> Result<Vec<ParsedBundleLine>, String> {
+fn parse_processor_header(text: &str) -> Result<(ProcessorLayout, usize), String> {
+    let mut first_line = None::<(usize, String)>;
+    for (idx, raw_line) in text.lines().enumerate() {
+        let line = strip_comment(raw_line).trim().to_string();
+        if !line.is_empty() {
+            first_line = Some((idx, line));
+            break;
+        }
+    }
+
+    let Some((start_idx, first)) = first_line else {
+        return Err(format!("missing `.processor {{ ... }}` header; {PROCESSOR_DOC_HINT}"));
+    };
+    if first.starts_with(".width") {
+        return Err(format!("line {}: legacy `.width` header is no longer supported; {PROCESSOR_DOC_HINT}", start_idx + 1));
+    }
+    if !first.starts_with(".processor") {
+        return Err(format!("line {}: expected `.processor {{ ... }}` header; {PROCESSOR_DOC_HINT}", start_idx + 1));
+    }
+
+    let mut depth = 0isize;
+    let mut saw_open = false;
+    let mut block_lines = Vec::<(usize, String)>::new();
+    for (idx, raw_line) in text.lines().enumerate().skip(start_idx) {
+        let line_no = idx + 1;
+        let line = strip_comment(raw_line).trim().to_string();
+        if line.is_empty() {
+            continue;
+        }
+        for ch in line.chars() {
+            if ch == '{' {
+                depth += 1;
+                saw_open = true;
+            } else if ch == '}' {
+                depth -= 1;
+                if depth < 0 {
+                    return Err(format!("line {line_no}: unmatched `}}` in processor block"));
+                }
+            }
+        }
+        block_lines.push((line_no, line));
+        if saw_open && depth == 0 {
+            let layout = parse_processor_block(&block_lines)?;
+            return Ok((layout, idx + 1));
+        }
+    }
+
+    Err(format!("line {}: unterminated `.processor` block", start_idx + 1))
+}
+
+fn parse_processor_block(lines: &[(usize, String)]) -> Result<ProcessorLayout, String> {
+    let mut width = None::<usize>;
+    let mut units = Vec::<UnitDecl>::new();
+    let mut slots = Vec::<Option<SlotSpec>>::new();
+    let mut saw_cache = false;
+    let mut saw_topology = false;
+    let mut topology_cpus = None::<usize>;
+    let mut section = "";
+
+    for (line_no, raw_line) in lines {
+        let mut line = raw_line.trim();
+        if line.starts_with(".processor") {
+            line = line.trim_start_matches(".processor").trim();
+        }
+        if line == "{" || line == "}" {
+            continue;
+        }
+        if line.is_empty() {
+            continue;
+        }
+        if line == "hardware" || line == "hardware {" {
+            section = "hardware";
+            continue;
+        }
+        if line == "layout slots" || line == "layout slots {" {
+            section = "slots";
+            continue;
+        }
+        if line.starts_with("cache") {
+            saw_cache = true;
+            section = "cache";
+            continue;
+        }
+        if line.starts_with("topology") {
+            saw_topology = true;
+            section = "topology";
+            if let Some(cpus) = parse_topology_cpus(line)? {
+                topology_cpus = Some(cpus);
+            }
+            continue;
+        }
+        if line == "}" {
+            section = "";
+            continue;
+        }
+
+        if let Some(rest) = line.strip_prefix("width") {
+            let value = rest.trim();
+            width = Some(value.parse::<usize>().map_err(|_| format!("line {line_no}: invalid processor width `{value}`"))?);
+            continue;
+        }
+
+        match section {
+            "hardware" => {
+                let decl = parse_unit_decl(line, *line_no)?;
+                if units.iter().any(|u| u.name == decl.name) {
+                    return Err(format!("line {line_no}: duplicate hardware unit `{}`", decl.name));
+                }
+                units.push(decl);
+            }
+            "slots" => {
+                let (slot, spec) = parse_slot_spec(line, *line_no)?;
+                if slots.len() <= slot {
+                    slots.resize_with(slot + 1, || None);
+                }
+                if slots[slot].is_some() {
+                    return Err(format!("line {line_no}: duplicate layout slot {slot}"));
+                }
+                slots[slot] = Some(spec);
+            }
+            "topology" => {
+                if let Some(cpus) = parse_topology_cpus(line)? {
+                    topology_cpus = Some(cpus);
+                }
+            }
+            "cache" => {}
+            _ => return Err(format!("line {line_no}: unexpected processor layout directive `{line}`")),
+        }
+    }
+
+    let width = width.ok_or_else(|| "processor block missing `width`".to_string())?;
+    let mut final_slots = Vec::new();
+    for slot in 0..slots.len() {
+        let Some(spec) = slots[slot].take() else {
+            return Err(format!("processor layout missing slot {slot}"));
+        };
+        final_slots.push(spec);
+    }
+    let layout = ProcessorLayout {
+        width,
+        units,
+        slots: final_slots,
+        cache: CacheConfig {},
+        topology: TopologyConfig { cpus: topology_cpus.unwrap_or(1) },
+    };
+    if !saw_cache {
+        return Err("processor block missing stage-0 `cache { }` placeholder".to_string());
+    }
+    if !saw_topology {
+        return Err("processor block missing stage-0 `topology { cpus 1 }` placeholder".to_string());
+    }
+    Ok(layout)
+}
+
+fn parse_unit_decl(line: &str, line_no: usize) -> Result<UnitDecl, String> {
+    let rest = line
+        .strip_prefix("unit")
+        .ok_or_else(|| format!("line {line_no}: expected `unit <name> = <kind>`"))?
+        .trim();
+    let (name, kind) = rest
+        .split_once('=')
+        .ok_or_else(|| format!("line {line_no}: expected `unit <name> = <kind>`"))?;
+    let name = name.trim();
+    if !is_identifier(name) {
+        return Err(format!("line {line_no}: invalid unit name `{name}`"));
+    }
+    let kind = match kind.trim() {
+        "integer_alu" => UnitKind::IntegerAlu,
+        "memory" => UnitKind::Memory,
+        "control" => UnitKind::Control,
+        "multiplier" => UnitKind::Multiplier,
+        other => return Err(format!("line {line_no}: unknown stage-0 unit kind `{other}`")),
+    };
+    Ok(UnitDecl { name: name.to_string(), kind })
+}
+
+fn parse_slot_spec(line: &str, line_no: usize) -> Result<(usize, SlotSpec), String> {
+    let (slot, rhs) = line
+        .split_once('=')
+        .ok_or_else(|| format!("line {line_no}: expected `<slot> = {{ unit, ... }}`"))?;
+    let slot = slot.trim().parse::<usize>().map_err(|_| format!("line {line_no}: invalid slot index `{}`", slot.trim()))?;
+    let rhs = rhs.trim();
+    if !(rhs.starts_with('{') && rhs.ends_with('}')) {
+        return Err(format!("line {line_no}: expected unit set `{{ ... }}`"));
+    }
+    let inner = &rhs[1..rhs.len() - 1];
+    let mut units = Vec::new();
+    for part in inner.split(',') {
+        let unit = part.trim();
+        if unit.is_empty() {
+            continue;
+        }
+        if !is_identifier(unit) {
+            return Err(format!("line {line_no}: invalid unit reference `{unit}`"));
+        }
+        units.push(unit.to_string());
+    }
+    Ok((slot, SlotSpec { units }))
+}
+
+fn parse_topology_cpus(line: &str) -> Result<Option<usize>, String> {
+    let cleaned = line.replace('{', " ").replace('}', " ");
+    let parts = cleaned.split_whitespace().collect::<Vec<_>>();
+    for pair in parts.windows(2) {
+        if pair[0] == "cpus" {
+            return pair[1]
+                .parse::<usize>()
+                .map(Some)
+                .map_err(|_| format!("invalid topology cpu count `{}`", pair[1]));
+        }
+    }
+    Ok(None)
+}
+
+fn collect_lines(text: &str) -> Result<Vec<ParsedBundleLine>, String> {
     let mut labels = HashMap::<String, usize>::new();
     let mut parsed = Vec::<ParsedBundleLine>::new();
     let mut bundle_index = 0usize;
@@ -45,20 +272,7 @@ fn collect_lines<const W: usize>(text: &str) -> Result<Vec<ParsedBundleLine>, St
         }
 
         if line.starts_with(".width") {
-            let width = line
-                .strip_prefix(".width")
-                .map(str::trim)
-                .filter(|s| !s.is_empty())
-                .ok_or_else(|| format!("line {line_no}: expected `.width <n>`"))?;
-            let parsed_width = width
-                .parse::<usize>()
-                .map_err(|_| format!("line {line_no}: invalid width `{width}`"))?;
-            if parsed_width != W {
-                return Err(format!(
-                    "line {line_no}: source declares width {parsed_width}, parser is instantiated for width {W}"
-                ));
-            }
-            continue;
+            return Err(format!("line {line_no}: legacy `.width` header is no longer supported; {PROCESSOR_DOC_HINT}"));
         }
 
         if in_block {
@@ -283,7 +497,7 @@ fn is_reserved_token(token: &str) -> bool {
     )
 }
 
-fn parse_instruction<const W: usize>(line: &str, line_no: usize) -> Result<(usize, Syllable), String> {
+fn parse_instruction(line: &str, line_no: usize, width: usize) -> Result<(usize, Syllable), String> {
     let normalized = normalize_instruction_text(line);
     let mut tokens: Vec<&str> = normalized.split_whitespace().collect();
     if tokens.len() < 2 {
@@ -291,8 +505,8 @@ fn parse_instruction<const W: usize>(line: &str, line_no: usize) -> Result<(usiz
     }
 
     let slot = parse_slot(tokens[0], line_no)?;
-    if slot >= W {
-        return Err(format!("line {line_no}: slot {slot} out of range for width {W}"));
+    if slot >= width {
+        return Err(format!("line {line_no}: slot {slot} out of range for width {width}"));
     }
     tokens.remove(0);
 
@@ -605,21 +819,36 @@ mod tests {
 
     const W: usize = 4;
 
+    fn processor_header(width: usize) -> String {
+        let mut slots = String::new();
+        for slot in 0..width {
+            let units = match slot % 4 {
+                0 | 1 => "alu",
+                2 => "mem",
+                _ => "ctrl, mul",
+            };
+            slots.push_str(&format!("    {slot} = {{ {units} }}\n"));
+        }
+        format!(
+            ".processor {{\n  width {width}\n  hardware {{\n    unit alu = integer_alu\n    unit mem = memory\n    unit ctrl = control\n    unit mul = multiplier\n  }}\n  layout slots {{\n{slots}  }}\n  cache {{ }}\n  topology {{ cpus 1 }}\n}}\n"
+        )
+    }
+
     #[test]
     fn parses_and_executes_text_program_with_labels() {
-        let source = r#"
+        let source = format!("{}{}", processor_header(W), r#"
 start: i0 mov_imm r1, 6 | i1 mov_imm r2, 7
        x mul r3, r1, r2
        m store_d r0, r3, 0x100
 done:  x ret
-"#;
+"#);
 
-        let program = parse_program::<W>(source).expect("program should parse");
+        let program = parse_program(&source).expect("program should parse");
         let mut latencies = LatencyTable::default();
         latencies.set(Opcode::Mul, 5);
-        let mut cpu = CpuState::<W>::new(latencies);
+        let mut cpu = CpuState::new(program.layout.width, latencies);
 
-        while cpu.step(&program) {}
+        while cpu.step(&program.bundles) {}
 
         assert!(cpu.halted);
         assert_eq!(cpu.read_gpr(3), 42);
@@ -629,16 +858,14 @@ done:  x ret
 
     #[test]
     fn rejects_unknown_label() {
-        let source = "start: x jump missing_label";
-        let err = parse_program::<W>(source).expect_err("program should fail");
+        let source = format!("{}{}", processor_header(W), "start: x jump missing_label");
+        let err = parse_program(&source).expect_err("program should fail");
         assert!(err.contains("unknown label"));
     }
 
     #[test]
     fn parses_block_style_assembly() {
         let source = r#"
-.width 4
-
 start:
 {
   I0: movi r1, 10
@@ -668,11 +895,12 @@ start:
   X : ret
 }
 "#;
+        let source = format!("{}{}", processor_header(W), source);
 
-        let program = parse_program::<W>(source).expect("program should parse");
-        let mut cpu = CpuState::<W>::new(LatencyTable::default());
+        let program = parse_program(&source).expect("program should parse");
+        let mut cpu = CpuState::new(program.layout.width, LatencyTable::default());
 
-        while cpu.step(&program) {}
+        while cpu.step(&program.bundles) {}
 
         assert!(cpu.halted);
         assert_eq!(cpu.read_gpr(3), 30);

@@ -1,6 +1,6 @@
 /// Instruction Set Architecture for the LWIR VLIW processor.
 ///
-/// Bundle width W is a compile-time const in [4, 8, 16, 32, 64, 128, 256].
+/// Bundle width is declared by the runtime processor layout in [4, 8, 16, 32, 64, 128, 256].
 /// Slots cycle through slot classes: I (integer), M (memory), X (control/mul).
 use builtin::*;
 use builtin_macros::*;

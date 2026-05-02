@@ -4,12 +4,12 @@ verus! {
 // Bundle legality and stall checks
 // ---------------------------------------------------------------------------
 
-impl<const W: usize> CpuState<W> {
+impl CpuState {
     /// Runtime legality check for one bundle in the current architectural state.
     ///
     /// Invalid bundles are rejected before execution so compiler bugs are not
     /// silently accepted by the simulator.
-    fn bundle_is_legal(&self, bundle: &Bundle<W>) -> (ret: bool)
+    fn bundle_is_legal(&self, bundle: &Bundle) -> (ret: bool)
         requires self.wf(),
     {
         let mut slot = 0usize;
@@ -86,7 +86,7 @@ impl<const W: usize> CpuState<W> {
 
     /// Does this bundle have an active GPR read whose producer is not ready
     /// by the next cycle boundary?
-    fn bundle_has_unready_gpr_sources(&self, bundle: &Bundle<W>) -> (ret: bool)
+    fn bundle_has_unready_gpr_sources(&self, bundle: &Bundle) -> (ret: bool)
         requires
             self.wf(),
             self.cycle < u64::MAX,

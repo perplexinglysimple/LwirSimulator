@@ -7,9 +7,10 @@ This document defines the stable text format emitted by the LLVM backend for the
 A file is plain text with optional comments and labels.
 
 - Comments start with `#` and run to end-of-line.
-- Optional width directive:
-  - `.width <N>`
-  - Must match simulator/parser width parameter (`parse_program::<N>`).
+- Mandatory processor header:
+  - `.processor { ... }`
+  - Must declare `width`, stage-0 hardware units, `layout slots`, `cache { }`, and `topology { cpus 1 }`.
+  - Legacy `.width <N>` files are rejected.
 - Program is a sequence of **bundles**.
 
 ## 2. Bundle encodings
@@ -67,7 +68,7 @@ Slots can be written as symbolic names or numeric indices.
 - Symbolic: `i0`, `i1`, `m`, `x`.
 - Numeric: `0..W-1`.
 
-For wider bundles, numeric slots are recommended; architectural classes repeat every 4 slots (`I, I, M, X`).
+For wider bundles, numeric slots are recommended. The canonical stage-0 layout repeats every 4 slots (`I, I, M, X`) by assigning `alu`, `alu`, `mem`, and `ctrl, mul` units.
 
 ## 5. Predication syntax
 
@@ -132,7 +133,26 @@ Assembly syntax validity is necessary but not sufficient. Backend output must al
 ## 9. Minimal canonical example
 
 ```text
-.width 4
+.processor {
+  width 4
+
+  hardware {
+    unit alu = integer_alu
+    unit mem = memory
+    unit ctrl = control
+    unit mul = multiplier
+  }
+
+  layout slots {
+    0 = { alu }
+    1 = { alu }
+    2 = { mem }
+    3 = { ctrl, mul }
+  }
+
+  cache { }
+  topology { cpus 1 }
+}
 
 entry:
 {

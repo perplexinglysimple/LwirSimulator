@@ -4,7 +4,7 @@ verus! {
 // Memory helpers — fully verified.
 // ---------------------------------------------------------------------------
 
-impl<const W: usize> CpuState<W> {
+impl CpuState {
     fn load8(&self, addr: usize) -> (ret: u8)
         requires self.memory.len() == MEM_SIZE,
         ensures
