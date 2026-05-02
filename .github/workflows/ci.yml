@@ -15,7 +15,7 @@ jobs:
       - name: Check out simulator
         uses: actions/checkout@v4
         with:
-          path: LwirSimulator
+          path: VliwSimulator
 
       - name: Check out Verus
         uses: actions/checkout@v4
@@ -39,8 +39,8 @@ jobs:
             ~/.cargo/git
             verus/source/target
             verus/source/target-verus
-            LwirSimulator/target
-          key: ${{ runner.os }}-cargo-${{ hashFiles('LwirSimulator/Cargo.lock', 'verus/rust-toolchain.toml') }}
+            VliwSimulator/target
+          key: ${{ runner.os }}-cargo-${{ hashFiles('VliwSimulator/Cargo.lock', 'verus/rust-toolchain.toml') }}
           restore-keys: |
             ${{ runner.os }}-cargo-
 
@@ -64,15 +64,15 @@ jobs:
           echo "VERUS_Z3_PATH=${GITHUB_WORKSPACE}/verus/source/z3" >> "$GITHUB_ENV"
 
       - name: Verify with Verus
-        working-directory: LwirSimulator
+        working-directory: VliwSimulator
         run: cargo verus verify
 
       - name: Run Rust tests
-        working-directory: LwirSimulator
+        working-directory: VliwSimulator
         run: cargo test --all-targets
 
       - name: Run CPU simulator golden fixtures
-        working-directory: LwirSimulator
+        working-directory: VliwSimulator
         run: |
           set -euo pipefail
           mkdir -p target/ci-traces
@@ -82,17 +82,17 @@ jobs:
             local fixture="$2"
             local trace="target/ci-traces/$(basename "$fixture").trace"
 
-            cargo run --quiet --bin lwir_simulator -- --trace "$fixture" > "$trace"
+            cargo run --quiet --bin vliw_simulator -- --trace "$fixture" > "$trace"
             grep -q "^trace v1 width=${width}$" "$trace"
             grep -q "^final pc=.*halted=true$" "$trace"
           }
 
-          run_trace 4 examples/fixtures/legal/w4_control_pred_mem_latency.lwir
-          run_trace 8 examples/fixtures/legal/w8_pred_mem_latency.lwir
-          run_trace 16 examples/fixtures/legal/w16_call_mem_latency.lwir
+          run_trace 4 examples/fixtures/legal/w4_control_pred_mem_latency.vliw
+          run_trace 8 examples/fixtures/legal/w8_pred_mem_latency.vliw
+          run_trace 16 examples/fixtures/legal/w16_call_mem_latency.vliw
 
       - name: Run verifier golden fixtures
-        working-directory: LwirSimulator
+        working-directory: VliwSimulator
         run: |
           set -euo pipefail
           mkdir -p target/ci-verifier
@@ -101,7 +101,7 @@ jobs:
             local fixture="$1"
             local output="target/ci-verifier/$(basename "$fixture").txt"
 
-            cargo run --quiet --bin lwir_verify -- "$fixture" > "$output"
+            cargo run --quiet --bin vliw_verify -- "$fixture" > "$output"
             grep -q "Result  : CLEAN" "$output"
           }
 
@@ -112,7 +112,7 @@ jobs:
             local status
 
             set +e
-            cargo run --quiet --bin lwir_verify -- "$fixture" > "$output" 2>&1
+            cargo run --quiet --bin vliw_verify -- "$fixture" > "$output" 2>&1
             status=$?
             set -e
 
@@ -122,13 +122,13 @@ jobs:
             done
           }
 
-          verify_clean examples/fixtures/legal/w4_control_pred_mem_latency.lwir
-          verify_clean examples/fixtures/legal/w8_pred_mem_latency.lwir
-          verify_clean examples/fixtures/legal/w16_call_mem_latency.lwir
+          verify_clean examples/fixtures/legal/w4_control_pred_mem_latency.vliw
+          verify_clean examples/fixtures/legal/w8_pred_mem_latency.vliw
+          verify_clean examples/fixtures/legal/w16_call_mem_latency.vliw
 
-          verify_illegal examples/fixtures/illegal/w4_latency_mul_use.lwir gpr-ready-cycle
-          verify_illegal examples/fixtures/illegal/w8_call_ret_same_bundle.lwir same-bundle-gpr-raw
-          verify_illegal examples/fixtures/illegal/w16_predicate_and_slot.lwir same-bundle-pred-hazard slot-opcode-legality
+          verify_illegal examples/fixtures/illegal/w4_latency_mul_use.vliw gpr-ready-cycle
+          verify_illegal examples/fixtures/illegal/w8_call_ret_same_bundle.vliw same-bundle-gpr-raw
+          verify_illegal examples/fixtures/illegal/w16_predicate_and_slot.vliw same-bundle-pred-hazard slot-opcode-legality
 
   coverage:
     runs-on: ubuntu-latest
@@ -137,7 +137,7 @@ jobs:
       - name: Check out simulator
         uses: actions/checkout@v4
         with:
-          path: LwirSimulator
+          path: VliwSimulator
 
       - name: Check out Verus
         uses: actions/checkout@v4
@@ -159,25 +159,25 @@ jobs:
             ~/.cargo/bin
             ~/.cargo/registry
             ~/.cargo/git
-            LwirSimulator/target
-          key: ${{ runner.os }}-coverage-${{ hashFiles('LwirSimulator/Cargo.lock') }}
+            VliwSimulator/target
+          key: ${{ runner.os }}-coverage-${{ hashFiles('VliwSimulator/Cargo.lock') }}
           restore-keys: |
             ${{ runner.os }}-coverage-
 
       - name: Install cargo-llvm-cov
-        working-directory: LwirSimulator
+        working-directory: VliwSimulator
         run: cargo install cargo-llvm-cov --locked --force
 
       - name: Generate coverage report
-        working-directory: LwirSimulator
+        working-directory: VliwSimulator
         run: cargo llvm-cov --workspace --all-targets --lcov --output-path lcov.info
 
       - name: Print coverage summary
-        working-directory: LwirSimulator
+        working-directory: VliwSimulator
         run: cargo llvm-cov report --summary-only
 
       - name: Upload coverage artifact
         uses: actions/upload-artifact@v4
         with:
           name: coverage-lcov
-          path: LwirSimulator/lcov.info
+          path: VliwSimulator/lcov.info

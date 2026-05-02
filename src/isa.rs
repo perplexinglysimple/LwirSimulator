@@ -1,4 +1,4 @@
-/// Instruction Set Architecture for the LWIR VLIW processor.
+/// Instruction Set Architecture for the VLIW processor.
 ///
 /// Bundle width is declared by the runtime processor layout in [4, 8, 16, 32, 64, 128, 256].
 /// Slot legality is declared by the runtime processor layout.
@@ -8,7 +8,7 @@ use vstd::prelude::*;
 
 verus! {
 
-/// An opcode for the LWIR ISA.
+/// An opcode for the VLIW ISA.
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
 pub enum Opcode {
     // Integer slot ops

@@ -70,7 +70,7 @@ Independent tasks:
 - Update `CpuState::new(latencies)` to `CpuState::new(width, latencies)` or
   `CpuState::new(layout, latencies)` depending on how much layout is embedded
   in the CPU state during stage 0.
-- Remove CLI width dispatch in `src/main.rs` and `src/bin/lwir_verify.rs`.
+- Remove CLI width dispatch in `src/main.rs` and `src/bin/vliw_verify.rs`.
 - Extend the parser to require a leading `.processor { ... }` block.
 - Reject legacy `.width N` with an error pointing to
   `docs/processor_layout_plan.md`.
@@ -81,7 +81,7 @@ Independent tasks:
 - Add `program_layout_compatible(program, layout)` separately from
   layout well-formedness.
 - Migrate examples and fixtures from `.width` to `.processor`.
-- Update `docs/lwir_asm_format.md`, `docs/compiler_contract.md`, and README
+- Update `docs/vliw_asm_format.md`, `docs/compiler_contract.md`, and README
   examples.
 - Rewrite tests that currently instantiate `Bundle<W>`, `CpuState<W>`, or
   `parse_program::<W>`.

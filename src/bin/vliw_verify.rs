@@ -1,30 +1,30 @@
-/// Standalone program verifier for LWIR assembly.
+use std::env;
+use std::fs;
+use std::process::ExitCode;
+/// Standalone program verifier for VLIW assembly.
 ///
-/// Statically checks a .lwir / .lwirasm file against the compiler contract
+/// Statically checks a .vliw / .vliwasm file against the compiler contract
 /// in docs/compiler_contract.md without running the program.
 ///
 /// Exit codes:
 ///   0  — no violations found
 ///   1  — one or more contract violations found
 ///   2  — usage error or parse failure
-use lwir_simulator::asm::parse_program;
-use lwir_simulator::latency::LatencyTable;
-use lwir_simulator::verifier::{verify_program, Rule};
-use std::env;
-use std::fs;
-use std::process::ExitCode;
+use vliw_simulator::asm::parse_program;
+use vliw_simulator::latency::LatencyTable;
+use vliw_simulator::verifier::{verify_program, Rule};
 
 fn main() -> ExitCode {
     let mut args = env::args();
-    let exe = args.next().unwrap_or_else(|| "lwir_verify".to_string());
+    let exe = args.next().unwrap_or_else(|| "vliw_verify".to_string());
     let Some(path) = args.next() else {
-        eprintln!("usage: {exe} <program.lwir>");
-        eprintln!("  Statically verifies a .lwir program against the compiler contract.");
+        eprintln!("usage: {exe} <program.vliw>");
+        eprintln!("  Statically verifies a .vliw program against the compiler contract.");
         eprintln!("  Exit 0: clean  Exit 1: violations found  Exit 2: parse error");
         return ExitCode::from(2);
     };
     if args.next().is_some() {
-        eprintln!("usage: {exe} <program.lwir>");
+        eprintln!("usage: {exe} <program.vliw>");
         return ExitCode::from(2);
     }
 
@@ -47,7 +47,7 @@ fn main() -> ExitCode {
     let latencies = LatencyTable::default();
     let diags = verify_program(&program.layout, &program.bundles, &latencies);
 
-    println!("LWIR Verifier (W={})", program.layout.width);
+    println!("VLIW Verifier (W={})", program.layout.width);
     println!("Program : {path}");
     println!("Bundles : {}", program.bundles.len());
 

@@ -1,10 +1,10 @@
-use lwir_simulator::asm::parse_program;
-use lwir_simulator::bundle::Bundle;
-use lwir_simulator::cpu::CpuState;
-use lwir_simulator::isa::{Opcode, Syllable};
-use lwir_simulator::latency::LatencyTable;
-use lwir_simulator::layout::{canonical_layout, ProcessorLayout};
-use lwir_simulator::system::{Bus, BusAccessKind, BusReq, System};
+use vliw_simulator::asm::parse_program;
+use vliw_simulator::bundle::Bundle;
+use vliw_simulator::cpu::CpuState;
+use vliw_simulator::isa::{Opcode, Syllable};
+use vliw_simulator::latency::LatencyTable;
+use vliw_simulator::layout::{canonical_layout, ProcessorLayout};
+use vliw_simulator::system::{Bus, BusAccessKind, BusReq, System};
 
 const W: usize = 4;
 
@@ -168,7 +168,7 @@ fn trace_program(
     cpu: &mut CpuState,
     layout: &ProcessorLayout,
     program: &[Bundle],
-) -> lwir_simulator::cpu::TraceLog {
+) -> vliw_simulator::cpu::TraceLog {
     cpu.trace_program(layout, program)
 }
 
@@ -678,23 +678,23 @@ fn call_and_return_follow_link_register() {
 
 #[test]
 fn main_binary_runs_example_program_successfully() {
-    let output = std::process::Command::new(env!("CARGO_BIN_EXE_lwir_simulator"))
-        .arg("examples/hello.lwir")
+    let output = std::process::Command::new(env!("CARGO_BIN_EXE_vliw_simulator"))
+        .arg("examples/hello.vliw")
         .output()
         .expect("binary should run");
 
     assert!(output.status.success());
 
     let stdout = String::from_utf8(output.stdout).expect("stdout should be utf8");
-    assert!(stdout.contains("LWIR VLIW Simulator"));
-    assert!(stdout.contains("Program: examples/hello.lwir"));
+    assert!(stdout.contains("VLIW Simulator"));
+    assert!(stdout.contains("Program: examples/hello.vliw"));
     assert!(stdout.contains("Halted: true"));
     assert!(stdout.contains("42"));
 }
 
 #[test]
 fn main_binary_requires_program_path() {
-    let output = std::process::Command::new(env!("CARGO_BIN_EXE_lwir_simulator"))
+    let output = std::process::Command::new(env!("CARGO_BIN_EXE_vliw_simulator"))
         .output()
         .expect("binary should run");
 
@@ -702,7 +702,7 @@ fn main_binary_requires_program_path() {
 
     let stderr = String::from_utf8(output.stderr).expect("stderr should be utf8");
     assert!(stderr.contains("usage:"));
-    assert!(stderr.contains("<program.lwir>"));
+    assert!(stderr.contains("<program.vliw>"));
 }
 
 #[test]
@@ -878,10 +878,26 @@ fn direct_mapped_cache_reports_load_hit_streak() {
     let mut cpu = CpuState::new_for_layout(&program.layout, LatencyTable::default());
     let trace = trace_program(&mut cpu, &program.layout, &program.bundles).to_string();
 
-    assert!(trace.contains("kind=load width=8 addr=0x00000000 value=0x0000000000000000 in_bounds=true cache=miss"), "{trace}");
-    assert!(trace.contains("kind=load width=8 addr=0x00000008 value=0x0000000000000000 in_bounds=true cache=hit"), "{trace}");
-    assert!(trace.contains("gpr slot=2 reg=r1 value=0x0000000000000000 ready=5"), "{trace}");
-    assert!(trace.contains("gpr slot=2 reg=r2 value=0x0000000000000000 ready=4"), "{trace}");
+    assert!(
+        trace.contains(
+            "kind=load width=8 addr=0x00000000 value=0x0000000000000000 in_bounds=true cache=miss"
+        ),
+        "{trace}"
+    );
+    assert!(
+        trace.contains(
+            "kind=load width=8 addr=0x00000008 value=0x0000000000000000 in_bounds=true cache=hit"
+        ),
+        "{trace}"
+    );
+    assert!(
+        trace.contains("gpr slot=2 reg=r1 value=0x0000000000000000 ready=5"),
+        "{trace}"
+    );
+    assert!(
+        trace.contains("gpr slot=2 reg=r2 value=0x0000000000000000 ready=4"),
+        "{trace}"
+    );
 }
 
 #[test]
@@ -944,16 +960,24 @@ fn direct_mapped_cache_reports_dirty_eviction() {
     let mut cpu = CpuState::new_for_layout(&program.layout, LatencyTable::default());
     let trace = trace_program(&mut cpu, &program.layout, &program.bundles).to_string();
 
-    assert!(trace.contains("kind=store width=8 addr=0x00000000 value=0x0000000000000063 in_bounds=true cache=miss"), "{trace}");
+    assert!(
+        trace.contains(
+            "kind=store width=8 addr=0x00000000 value=0x0000000000000063 in_bounds=true cache=miss"
+        ),
+        "{trace}"
+    );
     assert!(trace.contains("kind=load width=8 addr=0x00000040 value=0x0000000000000000 in_bounds=true cache=miss_dirty"), "{trace}");
-    assert!(trace.contains("gpr slot=2 reg=r2 value=0x0000000000000000 ready=12"), "{trace}");
+    assert!(
+        trace.contains("gpr slot=2 reg=r2 value=0x0000000000000000 ready=12"),
+        "{trace}"
+    );
 }
 
 #[test]
 fn main_binary_trace_mode_emits_stable_log() {
-    let output = std::process::Command::new(env!("CARGO_BIN_EXE_lwir_simulator"))
+    let output = std::process::Command::new(env!("CARGO_BIN_EXE_vliw_simulator"))
         .arg("--trace")
-        .arg("examples/hello.lwir")
+        .arg("examples/hello.vliw")
         .output()
         .expect("binary should run");
 

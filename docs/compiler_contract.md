@@ -1,6 +1,6 @@
-# LWIR Compiler/Scheduler Contract
+# VLIW Compiler/Scheduler Contract
 
-This document defines the **minimum legality contract** that the compiler must satisfy before the simulator will accept and execute a `.lwir` / `.lwirasm` program.
+This document defines the **minimum legality contract** that the compiler must satisfy before the simulator will accept and execute a `.vliw` / `.vliwasm` program.
 
 The intent is to make compiler bring-up unambiguous: if a bundle stream violates any rule below, it is outside contract and may be rejected (halted) by the simulator or by an upcoming offline verifier.
 
@@ -50,7 +50,7 @@ Formally, for active `i < j`, if `slot i` writes `rD (rD != r0)`, including `cal
 
 **Enforcement mapping:**
 - Existing simulator check: `CpuState::bundle_is_legal` pairwise hazard scan (active syllables only).
-- Static verifier (`lwir_verify`): conservative — guard predicates are not evaluated. Every non-nop syllable is treated as unconditionally active, so the check applies to all pairs regardless of guards. Programs with complementary predicated writes to the same destination (e.g., `[p1] mov rD, ... | [!p1] mov rD, ...`) are accepted by the simulator but rejected by the static verifier.
+- Static verifier (`vliw_verify`): conservative — guard predicates are not evaluated. Every non-nop syllable is treated as unconditionally active, so the check applies to all pairs regardless of guards. Programs with complementary predicated writes to the same destination (e.g., `[p1] mov rD, ... | [!p1] mov rD, ...`) are accepted by the simulator but rejected by the static verifier.
 
 ### 4) No same-bundle WAW hazards
 
@@ -61,7 +61,7 @@ Within one bundle, two active syllables must not both write the same architectur
 
 **Enforcement mapping:**
 - Existing simulator check: `CpuState::bundle_is_legal` rejects same-destination writes (active syllables only).
-- Static verifier (`lwir_verify`): conservative — same-destination writes are rejected for all syllable pairs regardless of guard predicates. See rule 3 note.
+- Static verifier (`vliw_verify`): conservative — same-destination writes are rejected for all syllable pairs regardless of guard predicates. See rule 3 note.
 
 ### 5) No same-bundle predicate hazards
 
@@ -73,7 +73,7 @@ Includes:
 
 **Enforcement mapping:**
 - Existing simulator check: `CpuState::bundle_is_legal` checks predicate RAW/WAW (active syllables only).
-- Static verifier (`lwir_verify`): conservative — guard predicates are not evaluated. See rule 3 note.
+- Static verifier (`vliw_verify`): conservative — guard predicates are not evaluated. See rule 3 note.
 
 ### 6) GPR reads only occur after producer ready cycle
 
@@ -122,7 +122,7 @@ If not ready, the bundle is not executable this cycle (simulator stalls one cycl
 | Control-in-X restriction | `bundle_is_legal` via slot class | Dedicated control-placement diagnostic |
 | Memory-in-M restriction | `bundle_is_legal` via slot class | Dedicated memory-placement diagnostic |
 
-## Practical definition of a legal `.lwir` program
+## Practical definition of a legal `.vliw` program
 
 A program is legal for simulator acceptance if:
 

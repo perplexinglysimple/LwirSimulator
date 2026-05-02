@@ -25,15 +25,6 @@ dependencies = [
 ]
 
 [[package]]
-name = "lwir_simulator"
-version = "0.1.0"
-dependencies = [
- "verus_builtin",
- "verus_builtin_macros",
- "vstd",
-]
-
-[[package]]
 name = "proc-macro2"
 version = "1.0.106"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -120,6 +111,15 @@ dependencies = [
  "proc-macro2",
  "quote",
  "unicode-ident",
+]
+
+[[package]]
+name = "vliw_simulator"
+version = "0.1.0"
+dependencies = [
+ "verus_builtin",
+ "verus_builtin_macros",
+ "vstd",
 ]
 
 [[package]]

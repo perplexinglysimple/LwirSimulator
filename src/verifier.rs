@@ -1,4 +1,4 @@
-/// Independent static verifier for LWIR programs.
+/// Independent static verifier for VLIW programs.
 ///
 /// Checks all rules from docs/compiler_contract.md without executing the program.
 /// Produces a list of Diagnostics; an empty list means the program is clean.
@@ -211,9 +211,7 @@ fn check_bus_slot_conflicts(
     diags: &mut Vec<Diagnostic>,
 ) {
     for (slot, syl) in bundle.syllables.iter().enumerate() {
-        if is_memory_opcode(syl.opcode)
-            && !bus_slot(issue_cycle, cpu_id, layout.topology.cpus)
-        {
+        if is_memory_opcode(syl.opcode) && !bus_slot(issue_cycle, cpu_id, layout.topology.cpus) {
             diags.push(Diagnostic {
                 bundle_idx: bidx,
                 slot,
@@ -259,7 +257,10 @@ fn update_ready_at(
 }
 
 fn is_load_opcode_for_timing(op: Opcode) -> bool {
-    matches!(op, Opcode::LoadB | Opcode::LoadH | Opcode::LoadW | Opcode::LoadD)
+    matches!(
+        op,
+        Opcode::LoadB | Opcode::LoadH | Opcode::LoadW | Opcode::LoadD
+    )
 }
 
 fn gpr_write_dst(op: Opcode, dst: Option<usize>) -> Option<usize> {

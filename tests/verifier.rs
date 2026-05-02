@@ -1,9 +1,9 @@
-use lwir_simulator::asm::parse_program;
-use lwir_simulator::bundle::Bundle;
-use lwir_simulator::isa::{Opcode, Syllable};
-use lwir_simulator::latency::LatencyTable;
-use lwir_simulator::layout::canonical_layout;
-use lwir_simulator::verifier::{verify_program, verify_program_for_cpu, Diagnostic, Rule};
+use vliw_simulator::asm::parse_program;
+use vliw_simulator::bundle::Bundle;
+use vliw_simulator::isa::{Opcode, Syllable};
+use vliw_simulator::latency::LatencyTable;
+use vliw_simulator::layout::canonical_layout;
+use vliw_simulator::verifier::{verify_program, verify_program_for_cpu, Diagnostic, Rule};
 
 const W: usize = 4;
 
@@ -128,10 +128,10 @@ fn verify_bundles(program: &[Bundle], latencies: &LatencyTable) -> Vec<Diagnosti
     verify_program(&layout, program, latencies)
 }
 
-fn write_temp_lwir(name: &str, source: &str) -> std::path::PathBuf {
-    let dir = std::path::Path::new("target").join("test-lwir");
+fn write_temp_vliw(name: &str, source: &str) -> std::path::PathBuf {
+    let dir = std::path::Path::new("target").join("test-vliw");
     std::fs::create_dir_all(&dir).unwrap();
-    let path = dir.join(format!("{name}-{}.lwir", std::process::id()));
+    let path = dir.join(format!("{name}-{}.vliw", std::process::id()));
     std::fs::write(&path, source).unwrap();
     path
 }
@@ -271,7 +271,7 @@ fn sparse_layout_rejects_missing_multiplier_unit() {
 
 #[test]
 fn slot_legality_example_file_is_flagged() {
-    let source = std::fs::read_to_string("examples/illegal_wrong_slot.lwir").unwrap();
+    let source = std::fs::read_to_string("examples/illegal_wrong_slot.vliw").unwrap();
     let program = parse_program(&source).unwrap();
     let diags = verify_program(&program.layout, &program.bundles, &LatencyTable::default());
     assert!(has_rule(&diags, Rule::SlotOpcodeLegality), "{diags:?}");
@@ -313,7 +313,7 @@ fn detects_same_bundle_raw_via_call_then_ret_in_wide_bundle() {
 
 #[test]
 fn raw_example_file_is_flagged() {
-    let source = std::fs::read_to_string("examples/illegal_raw_same_bundle.lwir").unwrap();
+    let source = std::fs::read_to_string("examples/illegal_raw_same_bundle.vliw").unwrap();
     let program = parse_program(&source).unwrap();
     let diags = verify_program(&program.layout, &program.bundles, &LatencyTable::default());
     assert!(has_rule(&diags, Rule::SameBundleGprRaw), "{diags:?}");
@@ -542,7 +542,9 @@ fn verifier_uses_cache_worst_case_for_load_timing() {
 
     assert!(has_rule(&diags, Rule::GprReadyCycle), "{diags:?}");
     assert!(
-        diags.iter().any(|diag| diag.message.contains("not ready until cycle 10")),
+        diags
+            .iter()
+            .any(|diag| diag.message.contains("not ready until cycle 10")),
         "{diags:?}"
     );
 }
@@ -603,11 +605,18 @@ fn verifier_uses_system_worst_case_load_latency() {
 }
 "#;
     let program = parse_program(source).unwrap();
-    let diags = verify_program_for_cpu(&program.layout, &program.bundles, &LatencyTable::default(), 0);
+    let diags = verify_program_for_cpu(
+        &program.layout,
+        &program.bundles,
+        &LatencyTable::default(),
+        0,
+    );
 
     assert!(has_rule(&diags, Rule::GprReadyCycle), "{diags:?}");
     assert!(
-        diags.iter().any(|diag| diag.message.contains("not ready until cycle 12")),
+        diags
+            .iter()
+            .any(|diag| diag.message.contains("not ready until cycle 12")),
         "{diags:?}"
     );
 }
@@ -654,9 +663,9 @@ fn detects_timing_violation_via_call_link_register_write() {
 }
 
 #[test]
-fn detects_timing_violation_in_hello_lwir() {
-    // hello.lwir: mul r3 at bundle 1 (lat=3), store r3 at bundle 2 — not enough gap.
-    let source = std::fs::read_to_string("examples/hello.lwir").unwrap();
+fn detects_timing_violation_in_hello_vliw() {
+    // hello.vliw: mul r3 at bundle 1 (lat=3), store r3 at bundle 2 — not enough gap.
+    let source = std::fs::read_to_string("examples/hello.vliw").unwrap();
     let program = parse_program(&source).unwrap();
     let diags = verify_program(&program.layout, &program.bundles, &LatencyTable::default());
     assert!(has_rule(&diags, Rule::GprReadyCycle), "{diags:?}");
@@ -668,7 +677,7 @@ fn detects_timing_violation_in_hello_lwir() {
 
 #[test]
 fn clean_program_produces_no_diagnostics() {
-    let source = std::fs::read_to_string("examples/clean_schedule.lwir").unwrap();
+    let source = std::fs::read_to_string("examples/clean_schedule.vliw").unwrap();
     let program = parse_program(&source).unwrap();
     let diags = verify_program(&program.layout, &program.bundles, &LatencyTable::default());
     assert!(
@@ -697,8 +706,8 @@ fn all_nop_program_is_clean() {
 
 #[test]
 fn verifier_binary_exits_clean_on_clean_program() {
-    let out = std::process::Command::new(env!("CARGO_BIN_EXE_lwir_verify"))
-        .arg("examples/clean_schedule.lwir")
+    let out = std::process::Command::new(env!("CARGO_BIN_EXE_vliw_verify"))
+        .arg("examples/clean_schedule.vliw")
         .output()
         .expect("binary should run");
 
@@ -713,7 +722,7 @@ fn verifier_binary_exits_clean_on_clean_program() {
 
 #[test]
 fn verifier_binary_accepts_width_8_program() {
-    let path = write_temp_lwir(
+    let path = write_temp_vliw(
         "width8-clean",
         &format!(
             "{}{}",
@@ -728,7 +737,7 @@ fn verifier_binary_accepts_width_8_program() {
         ),
     );
 
-    let out = std::process::Command::new(env!("CARGO_BIN_EXE_lwir_verify"))
+    let out = std::process::Command::new(env!("CARGO_BIN_EXE_vliw_verify"))
         .arg(&path)
         .output()
         .expect("binary should run");
@@ -745,8 +754,8 @@ fn verifier_binary_accepts_width_8_program() {
 
 #[test]
 fn verifier_binary_exits_one_on_illegal_slot() {
-    let out = std::process::Command::new(env!("CARGO_BIN_EXE_lwir_verify"))
-        .arg("examples/illegal_wrong_slot.lwir")
+    let out = std::process::Command::new(env!("CARGO_BIN_EXE_vliw_verify"))
+        .arg("examples/illegal_wrong_slot.vliw")
         .output()
         .expect("binary should run");
 
@@ -757,8 +766,8 @@ fn verifier_binary_exits_one_on_illegal_slot() {
 
 #[test]
 fn verifier_binary_exits_one_on_raw_hazard() {
-    let out = std::process::Command::new(env!("CARGO_BIN_EXE_lwir_verify"))
-        .arg("examples/illegal_raw_same_bundle.lwir")
+    let out = std::process::Command::new(env!("CARGO_BIN_EXE_vliw_verify"))
+        .arg("examples/illegal_raw_same_bundle.vliw")
         .output()
         .expect("binary should run");
 
@@ -769,7 +778,7 @@ fn verifier_binary_exits_one_on_raw_hazard() {
 
 #[test]
 fn verifier_binary_exits_two_on_no_args() {
-    let out = std::process::Command::new(env!("CARGO_BIN_EXE_lwir_verify"))
+    let out = std::process::Command::new(env!("CARGO_BIN_EXE_vliw_verify"))
         .output()
         .expect("binary should run");
 
@@ -780,13 +789,13 @@ fn verifier_binary_exits_two_on_no_args() {
 
 #[test]
 fn verifier_binary_prints_bundle_count_and_header() {
-    let out = std::process::Command::new(env!("CARGO_BIN_EXE_lwir_verify"))
-        .arg("examples/clean_schedule.lwir")
+    let out = std::process::Command::new(env!("CARGO_BIN_EXE_vliw_verify"))
+        .arg("examples/clean_schedule.vliw")
         .output()
         .expect("binary should run");
 
     let stdout = String::from_utf8(out.stdout).unwrap();
-    assert!(stdout.contains("LWIR Verifier"), "{stdout}");
+    assert!(stdout.contains("VLIW Verifier"), "{stdout}");
     assert!(stdout.contains("Bundles"), "{stdout}");
 }
 
@@ -796,32 +805,32 @@ fn verifier_binary_prints_bundle_count_and_header() {
 
 #[test]
 fn backend_legal_fixtures_are_clean() {
-    assert_clean_fixture::<4>("examples/fixtures/legal/w4_control_pred_mem_latency.lwir");
-    assert_clean_fixture::<4>("examples/fixtures/legal/w4_composed_slot.lwir");
-    assert_clean_fixture::<4>("examples/fixtures/legal/w4_fp_unit.lwir");
-    assert_clean_fixture::<4>("examples/fixtures/legal/w4_aes_unit.lwir");
-    assert_clean_fixture::<4>("examples/fixtures/legal/w4_cache_hit_streak.lwir");
-    assert_clean_fixture::<4>("examples/fixtures/legal/w4_cache_dirty_eviction.lwir");
-    assert_clean_fixture::<8>("examples/fixtures/legal/w8_pred_mem_latency.lwir");
-    assert_clean_fixture::<16>("examples/fixtures/legal/w16_call_mem_latency.lwir");
+    assert_clean_fixture::<4>("examples/fixtures/legal/w4_control_pred_mem_latency.vliw");
+    assert_clean_fixture::<4>("examples/fixtures/legal/w4_composed_slot.vliw");
+    assert_clean_fixture::<4>("examples/fixtures/legal/w4_fp_unit.vliw");
+    assert_clean_fixture::<4>("examples/fixtures/legal/w4_aes_unit.vliw");
+    assert_clean_fixture::<4>("examples/fixtures/legal/w4_cache_hit_streak.vliw");
+    assert_clean_fixture::<4>("examples/fixtures/legal/w4_cache_dirty_eviction.vliw");
+    assert_clean_fixture::<8>("examples/fixtures/legal/w8_pred_mem_latency.vliw");
+    assert_clean_fixture::<16>("examples/fixtures/legal/w16_call_mem_latency.vliw");
 }
 
 #[test]
 fn backend_illegal_fixtures_report_expected_rules() {
     assert_illegal_fixture::<4>(
-        "examples/fixtures/illegal/w4_latency_mul_use.lwir",
+        "examples/fixtures/illegal/w4_latency_mul_use.vliw",
         &[Rule::GprReadyCycle],
     );
     assert_illegal_fixture::<8>(
-        "examples/fixtures/illegal/w8_call_ret_same_bundle.lwir",
+        "examples/fixtures/illegal/w8_call_ret_same_bundle.vliw",
         &[Rule::SameBundleGprRaw],
     );
     assert_illegal_fixture::<16>(
-        "examples/fixtures/illegal/w16_predicate_and_slot.lwir",
+        "examples/fixtures/illegal/w16_predicate_and_slot.vliw",
         &[Rule::SameBundlePredHazard, Rule::SlotOpcodeLegality],
     );
     assert_illegal_fixture::<4>(
-        "examples/fixtures/illegal/w4_missing_fp_unit.lwir",
+        "examples/fixtures/illegal/w4_missing_fp_unit.vliw",
         &[Rule::SlotOpcodeLegality],
     );
 }
@@ -829,9 +838,9 @@ fn backend_illegal_fixtures_report_expected_rules() {
 #[test]
 fn processor_layout_parse_error_fixtures_are_rejected() {
     for path in [
-        "examples/fixtures/illegal/w4_no_processor_header.lwir",
-        "examples/fixtures/illegal/w4_unknown_unit.lwir",
-        "examples/fixtures/illegal/w4_layout_width_mismatch.lwir",
+        "examples/fixtures/illegal/w4_no_processor_header.vliw",
+        "examples/fixtures/illegal/w4_unknown_unit.vliw",
+        "examples/fixtures/illegal/w4_layout_width_mismatch.vliw",
     ] {
         let source = std::fs::read_to_string(path).unwrap();
         let err = parse_program(&source).expect_err("fixture should fail during parsing");

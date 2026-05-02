@@ -1,21 +1,21 @@
-/// Command-line runner for the LWIR VLIW simulator.
-///
-/// The binary currently consumes a simple text assembly format. That format is
-/// intentionally lightweight so compiler work can start before a binary object
-/// format exists.
-use lwir_simulator::asm::parse_program;
-use lwir_simulator::cpu::{print_cpu_state, CpuState};
-use lwir_simulator::isa::Opcode;
-use lwir_simulator::latency::LatencyTable;
-use lwir_simulator::system::System;
+// Command-line runner for the VLIW simulator.
+//
+// The binary currently consumes a simple text assembly format. That format is
+// intentionally lightweight so compiler work can start before a binary object
+// format exists.
 use std::env;
 use std::fs;
 use std::process::ExitCode;
+use vliw_simulator::asm::parse_program;
+use vliw_simulator::cpu::{print_cpu_state, CpuState};
+use vliw_simulator::isa::Opcode;
+use vliw_simulator::latency::LatencyTable;
+use vliw_simulator::system::System;
 
 fn main() -> ExitCode {
     let exe = env::args()
         .next()
-        .unwrap_or_else(|| "lwir_simulator".to_string());
+        .unwrap_or_else(|| "vliw_simulator".to_string());
     let mut trace = false;
     let mut path = None::<String>;
 
@@ -28,17 +28,17 @@ fn main() -> ExitCode {
             }
             _ if path.is_none() => path = Some(arg),
             _ => {
-                eprintln!("usage: {exe} [--trace] <program.lwir>");
+                eprintln!("usage: {exe} [--trace] <program.vliw>");
                 return ExitCode::from(2);
             }
         }
     }
 
     let Some(path) = path else {
-        eprintln!("usage: {exe} [--trace] <program.lwir>");
+        eprintln!("usage: {exe} [--trace] <program.vliw>");
         eprintln!("example:");
-        eprintln!("  {exe} examples/hello.lwir");
-        eprintln!("  {exe} --trace examples/hello.lwir");
+        eprintln!("  {exe} examples/hello.vliw");
+        eprintln!("  {exe} --trace examples/hello.vliw");
         return ExitCode::from(2);
     };
 
@@ -74,7 +74,7 @@ fn main() -> ExitCode {
         return ExitCode::SUCCESS;
     }
 
-    println!("LWIR VLIW Simulator (W={})", program.layout.width);
+    println!("VLIW Simulator (W={})", program.layout.width);
     println!("Program: {path}");
     println!("Bundles: {}", program.bundles.len());
 
@@ -93,6 +93,6 @@ fn main() -> ExitCode {
 }
 
 fn print_usage(exe: &str) {
-    eprintln!("usage: {exe} [--trace] <program.lwir>");
+    eprintln!("usage: {exe} [--trace] <program.vliw>");
     eprintln!("  --trace   emit deterministic per-bundle execution trace");
 }

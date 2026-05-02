@@ -1,6 +1,6 @@
-# LWIR Assembly Format (Stable Bundle-Level IR)
+# VLIW Assembly Format (Stable Bundle-Level IR)
 
-This document defines the stable text format emitted by the LLVM backend for the LWIR simulator.
+This document defines the stable text format emitted by the LLVM backend for the VLIW simulator.
 
 ## 1. File structure
 
@@ -109,7 +109,7 @@ Example:
 i0 [p1] movi r4, 1 | i1 [!p1] movi r4, 0
 ```
 
-The runtime accepts complementary predicated writes to the same destination because exactly one slot is active per cycle. The static verifier (`lwir_verify`) is deliberately conservative: it does not evaluate guard predicates and treats all non-nop syllables as unconditionally active. The pattern above would be flagged as a same-bundle WAW. Compilers targeting `lwir_verify` must avoid same-destination writes within a bundle regardless of guard complementarity.
+The runtime accepts complementary predicated writes to the same destination because exactly one slot is active per cycle. The static verifier (`vliw_verify`) is deliberately conservative: it does not evaluate guard predicates and treats all non-nop syllables as unconditionally active. The pattern above would be flagged as a same-bundle WAW. Compilers targeting `vliw_verify` must avoid same-destination writes within a bundle regardless of guard complementarity.
 
 Branch is special and carries predicate as an operand:
 
