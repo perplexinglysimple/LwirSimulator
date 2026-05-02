@@ -4,12 +4,12 @@ verus! {
 // Bundle legality and stall checks
 // ---------------------------------------------------------------------------
 
-impl<const W: usize> CpuState<W> {
+impl CpuState {
     /// Runtime legality check for one bundle in the current architectural state.
     ///
     /// Invalid bundles are rejected before execution so compiler bugs are not
     /// silently accepted by the simulator.
-    fn bundle_is_legal(&self, bundle: &Bundle<W>) -> (ret: bool)
+    fn bundle_is_legal(&self, layout: &ProcessorLayout, bundle: &Bundle) -> (ret: bool)
         requires self.wf(),
     {
         let mut slot = 0usize;
@@ -21,7 +21,7 @@ impl<const W: usize> CpuState<W> {
         {
             let syl = &bundle.syllables[slot];
             let active = self.syl_is_active_runtime(syl);
-            if active && syl.opcode != Opcode::Nop && syl.opcode.slot_class() != Self::slot_class_for_index(slot) {
+            if active && !layout.slot_can_execute(slot, syl.opcode) {
                 return false;
             }
 
@@ -40,7 +40,7 @@ impl<const W: usize> CpuState<W> {
 
                 if earlier_active && later_active {
                     if let Some(dst) = Self::opcode_gpr_write_dst(earlier.opcode, earlier.dst) {
-                        if dst > 0 && dst < NUM_GPRS {
+                        if dst > 0 && dst < self.num_gprs {
                             if later_syl.src[0] == Some(dst) || later_syl.src[1] == Some(dst) {
                                 return false;
                             }
@@ -59,7 +59,7 @@ impl<const W: usize> CpuState<W> {
 
                     if Self::opcode_writes_pred(earlier.opcode) {
                         if let Some(dst) = earlier.dst {
-                            if dst > 0 && dst < NUM_PREDS {
+                            if dst > 0 && dst < self.num_preds {
                                 if Self::opcode_reads_pred(later_syl.opcode)
                                     && (later_syl.src[0] == Some(dst)
                                         || later_syl.src[1] == Some(dst)
@@ -86,7 +86,7 @@ impl<const W: usize> CpuState<W> {
 
     /// Does this bundle have an active GPR read whose producer is not ready
     /// by the next cycle boundary?
-    fn bundle_has_unready_gpr_sources(&self, bundle: &Bundle<W>) -> (ret: bool)
+    fn bundle_has_unready_gpr_sources(&self, bundle: &Bundle) -> (ret: bool)
         requires
             self.wf(),
             self.cycle < u64::MAX,
@@ -112,7 +112,7 @@ impl<const W: usize> CpuState<W> {
                     decreases 2 - src_idx,
                 {
                     if let Some(src) = syl.src[src_idx] {
-                        if src > 0 && src < NUM_GPRS
+                        if src > 0 && src < self.num_gprs
                             && self.scoreboard[src].ready_cycle > next_cycle
                         {
                             return true;

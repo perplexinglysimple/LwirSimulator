@@ -1,0 +1,4 @@
+.width 4
+
+i0 movi r1, 1
+x ret

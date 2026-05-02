@@ -1,16 +1,16 @@
-# LwirSimulator
+# VliwSimulator
 
 A cycle-approximate **VLIW** (Very Long Instruction Word) simulator written in
 Rust and verified with [Verus](https://github.com/verus-lang/verus).
 
-The simulator is the architectural reference for the LWIR ISA and the execution
+The simulator is the architectural reference for the VLIW ISA and the execution
 model for compiler bring-up, scheduling experiments, and backend validation.
 
 ---
 
 ## Architecture overview
 
-LWIR is a statically scheduled VLIW ISA. Bundle structure, slot classes, and
+This project models a statically scheduled VLIW ISA. Bundle structure, slot classes, and
 operation placement are explicit in the instruction stream rather than inferred
 by dynamic issue hardware. The simulator keeps that model concrete and
 compiler-facing: resource usage is visible, latency is modeled explicitly, and
@@ -92,7 +92,7 @@ let val = cpu.read_gpr(3);
 let cond = cpu.read_pred(1);
 
 // dump everything
-lwir_simulator::cpu::print_cpu_state(&cpu);
+vliw_simulator::cpu::print_cpu_state(&cpu);
 
 // clone the full state for checkpointing
 let checkpoint = cpu.clone();
@@ -120,20 +120,20 @@ Architectural state includes:
 ### Build and run a text assembly program
 
 ```sh
-cargo run --bin lwir_simulator -- examples/hello.lwir
+cargo run --bin vliw_simulator -- examples/hello.vliw
 ```
 
-The simulator reads `.width <n>` when present and dispatches to widths
-`4, 8, 16, 32, 64, 128, 256`; files without a width directive default to `W=4`.
+The simulator requires a leading `.processor { ... }` header. The header
+declares the runtime bundle width and the stage-0 slot layout.
 
 Expected output:
 
 ```
-LWIR VLIW Simulator (W=4)
-Program: examples/hello.lwir
+VLIW Simulator (W=4)
+Program: examples/hello.vliw
 Bundles: 3
 
-=== LWIR Processor State (width=4) ===
+=== VLIW Processor State (width=4) ===
   PC: 3  Cycle: 7  Halted: true
   GPRs:
     r1  = 0x0000000000000006  (6)
@@ -150,7 +150,7 @@ Use `--trace` to emit a deterministic scheduler-debug log instead of the final
 state dump:
 
 ```sh
-cargo run --bin lwir_simulator -- --trace examples/hello.lwir
+cargo run --bin vliw_simulator -- --trace examples/hello.vliw
 ```
 
 The trace format is line-oriented and starts with `trace v1 width=<n>`. Each
@@ -160,8 +160,8 @@ branch/jump/call/return decisions, followed by a final `pc/cycle/halted` line.
 
 ### Text assembly format
 
-`lwir_simulator` consumes the stable bundle-level text format documented in
-[`docs/lwir_asm_format.md`](docs/lwir_asm_format.md). The format is intended for
+`vliw_simulator` consumes the stable bundle-level text format documented in
+[`docs/vliw_asm_format.md`](docs/vliw_asm_format.md). The format is intended for
 early backend output, regression fixtures, and golden tests.
 
 Current rules:
@@ -169,7 +169,7 @@ Current rules:
 - line form uses `|` to separate multiple syllables in the same bundle
 - block form uses one `slot: instruction` per line inside `{ ... }`
 - labels end with `:` and may prefix a bundle line or a following bundle block
-- optional `.width <n>` must match the compiled bundle width
+- a mandatory `.processor { ... }` header declares width and layout
 - comments start with `#`
 - the first token is the slot: `i0`, `i1`, `m`, `x`, or a numeric slot index
 - branches use `branch pN, target` or `branch !pN, target`
@@ -180,6 +180,27 @@ Current rules:
 Example:
 
 ```text
+.processor {
+  width 4
+
+  hardware {
+    unit alu = integer_alu
+    unit mem = memory
+    unit ctrl = control
+    unit mul = multiplier
+  }
+
+  layout slots {
+    0 = { alu }
+    1 = { alu }
+    2 = { mem }
+    3 = { ctrl, mul }
+  }
+
+  cache { }
+  topology { cpus 1 }
+}
+
 start: i0 mov_imm r1, 6 | i1 mov_imm r2, 7
        x mul r3, r1, r2
        m store_d r0, r3, 0x100
@@ -189,7 +210,26 @@ start: i0 mov_imm r1, 6 | i1 mov_imm r2, 7
 Block-style example:
 
 ```text
-.width 4
+.processor {
+  width 4
+
+  hardware {
+    unit alu = integer_alu
+    unit mem = memory
+    unit ctrl = control
+    unit mul = multiplier
+  }
+
+  layout slots {
+    0 = { alu }
+    1 = { alu }
+    2 = { mem }
+    3 = { ctrl, mul }
+  }
+
+  cache { }
+  topology { cpus 1 }
+}
 
 start:
 {
@@ -219,14 +259,14 @@ Supported operand shapes:
 
 ### Check a program with the static verifier
 
-`lwir_verify` checks a `.lwir` / `.lwirasm` file against the compiler/scheduler
+`vliw_verify` checks a `.vliw` / `.vliwasm` file against the compiler/scheduler
 contract in [`docs/compiler_contract.md`](docs/compiler_contract.md) without
-executing the program. It reads `.width <n>` when present and supports widths
-`4, 8, 16, 32, 64, 128, 256`; files without a width directive default to `W=4`.
+executing the program. It uses the mandatory `.processor { ... }` header for
+the runtime width and layout.
 
 ```sh
-cargo run --bin lwir_verify -- examples/clean_schedule.lwir
-cargo run --bin lwir_verify -- examples/illegal_raw_same_bundle.lwir
+cargo run --bin vliw_verify -- examples/clean_schedule.vliw
+cargo run --bin vliw_verify -- examples/illegal_raw_same_bundle.vliw
 ```
 
 Exit codes:
@@ -253,7 +293,7 @@ vargo build
 Verify this project:
 
 ```sh
-# from LwirSimulator/
+# from VliwSimulator/
 cargo verus verify
 ```
 
@@ -264,8 +304,8 @@ cargo test --all-targets
 ```
 
 GitHub Actions runs `cargo verus verify`, `cargo test --all-targets`, explicit
-`lwir_simulator --trace` runs over the legal golden fixtures, explicit
-`lwir_verify` runs over the legal and illegal golden fixtures, and coverage on
+`vliw_simulator --trace` runs over the legal golden fixtures, explicit
+`vliw_verify` runs over the legal and illegal golden fixtures, and coverage on
 every push to `main` / `master` and on pull requests.
 
 ### Measure code coverage
@@ -299,11 +339,11 @@ src/
   lib.rs       - crate root
   asm.rs       - text assembly parser and loader
   isa.rs       - opcodes, slot classes, Syllable type
-  bundle.rs    - Bundle<W> with Verus width invariant
+  bundle.rs    - runtime-width Bundle with Verus width invariant
   verifier.rs  - static compiler-contract verifier and proof boundary
   cpu.rs       - thin module wrapper for the CPU implementation
   bin/
-    lwir_verify.rs - standalone verifier CLI
+    vliw_verify.rs - standalone verifier CLI
   cpu/
     types.rs   - architectural constants, CpuState, scoreboard types
     spec.rs    - spec helpers used by the verified execution contracts
@@ -317,10 +357,10 @@ src/
 
 docs/
   compiler_contract.md - scheduler legality contract
-  lwir_asm_format.md   - stable text assembly format
+  vliw_asm_format.md   - stable text assembly format
 
 examples/
-  *.lwir       - clean and intentionally illegal assembly examples
+  *.vliw       - clean and intentionally illegal assembly examples
   fixtures/    - backend golden fixtures across widths 4, 8, and 16
 
 tests/
@@ -357,8 +397,8 @@ The project has moved past first simulator bring-up:
 - [x] Runtime bundle legality checks for slot class, same-bundle RAW/WAW, predicate hazards, and call/return link-register hazards
 - [x] Scoreboard stalls for read-before-ready GPR dependencies
 - [x] Stable bundle-level text assembly format with examples
-- [x] Standalone `lwir_verify` CLI for static compiler-contract checks
-- [x] Deterministic trace mode for scheduler debugging (`lwir_simulator --trace`)
+- [x] Standalone `vliw_verify` CLI for static compiler-contract checks
+- [x] Deterministic trace mode for scheduler debugging (`vliw_simulator --trace`)
 - [x] Backend-facing legal/illegal golden fixtures across widths `4`, `8`, and `16`
 - [x] Verus specs and lemmas for key bundle/verifier legality properties
 - [x] Runtime, parser, verifier, and CLI tests with CI coverage artifacts
@@ -385,4 +425,4 @@ into a compiler bring-up harness:
    execution.
 5. **Exercise real scheduling kernels.** Add DAXPY, FIR, reductions, and small
    control-heavy kernels to validate software pipelining and predicate-heavy
-   schedules against both `lwir_verify` and the simulator.
+   schedules against both `vliw_verify` and the simulator.

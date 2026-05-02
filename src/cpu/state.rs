@@ -4,41 +4,83 @@ verus! {
 // Well-formedness predicate and basic accessors
 // ---------------------------------------------------------------------------
 
-impl<const W: usize> CpuState<W> {
+impl CpuState {
     /// The processor state is well-formed when all register files and memory
     /// have the expected sizes, and the hardwired values (r0=0, p0=true) hold.
     pub open spec fn wf(&self) -> bool {
-        &&& self.gprs.len()       == NUM_GPRS
-        &&& self.preds.len()      == NUM_PREDS
-        &&& self.scoreboard.len() == NUM_GPRS
-        &&& self.memory.len()     == MEM_SIZE
+        &&& self.gprs.len()       == self.num_gprs
+        &&& self.preds.len()      == self.num_preds
+        &&& self.scoreboard.len() == self.num_gprs
+        &&& self.memory.len()     == self.mem_size
+        &&& self.num_gprs >= 32
+        &&& self.num_preds >= 1
+        &&& self.mem_size >= 8
+        &&& crate::bundle::is_valid_width(self.width)
         &&& self.gprs[0int]       == 0u64
         &&& self.preds[0int]      == true
     }
 
     /// Create a reset CPU.
-    pub fn new(latencies: LatencyTable) -> (ret: Self)
+    pub fn new(width: usize, latencies: LatencyTable) -> (ret: Self)
+        requires crate::bundle::is_valid_width(width),
+    {
+        Self::new_configured(width, NUM_GPRS, NUM_PREDS, MEM_SIZE, latencies)
+    }
+
+    pub fn new_for_layout(layout: &ProcessorLayout, latencies: LatencyTable) -> (ret: Self)
+        requires
+            crate::bundle::is_valid_width(layout.width),
+            crate::layout::arch_supported(layout),
+    {
+        let mut cpu = Self::new_configured(
+            layout.width,
+            layout.arch.gprs,
+            layout.arch.preds,
+            layout.arch.memory_bytes,
+            latencies,
+        );
+        cpu.cache = CacheState::new(layout.cache);
+        cpu
+    }
+
+    /// Create a reset CPU with explicit architectural resource sizes.
+    pub fn new_configured(
+        width: usize,
+        num_gprs: usize,
+        num_preds: usize,
+        mem_size: usize,
+        latencies: LatencyTable,
+    ) -> (ret: Self)
+        requires
+            crate::bundle::is_valid_width(width),
+            num_gprs >= 32,
+            num_preds >= 1,
+            mem_size >= 8,
         ensures
             ret.wf(),
+            ret.width == width,
+            ret.num_gprs == num_gprs,
+            ret.num_preds == num_preds,
+            ret.mem_size == mem_size,
             ret.pc    == 0,
             ret.cycle == 0,
             !ret.halted,
-            forall|i: int| 0 <= i < NUM_GPRS  ==> ret.gprs[i] == 0u64,
-            forall|i: int| 0 <= i < NUM_PREDS ==> ret.preds[i] == (i == 0),
-            forall|i: int| 0 <= i < MEM_SIZE  ==> ret.memory[i] == 0u8,
-            forall|i: int| 0 <= i < NUM_GPRS  ==> ret.scoreboard[i].ready_cycle == 0u64,
+            forall|i: int| 0 <= i < num_gprs  ==> ret.gprs[i] == 0u64,
+            forall|i: int| 0 <= i < num_preds ==> ret.preds[i] == (i == 0),
+            forall|i: int| 0 <= i < mem_size  ==> ret.memory[i] == 0u8,
+            forall|i: int| 0 <= i < num_gprs  ==> ret.scoreboard[i].ready_cycle == 0u64,
     {
         let mut gprs: Vec<u64> = Vec::new();
         let mut scoreboard: Vec<ScoreboardEntry> = Vec::new();
         let mut i = 0usize;
-        while i < NUM_GPRS
+        while i < num_gprs
             invariant
-                i <= NUM_GPRS,
+                i <= num_gprs,
                 gprs.len() == i,
                 scoreboard.len() == i,
                 forall|j: int| 0 <= j < i ==> gprs[j] == 0u64,
                 forall|j: int| 0 <= j < i ==> scoreboard[j].ready_cycle == 0u64,
-            decreases NUM_GPRS - i,
+            decreases num_gprs - i,
         {
             gprs.push(0u64);
             scoreboard.push(ScoreboardEntry { ready_cycle: 0 });
@@ -47,12 +89,12 @@ impl<const W: usize> CpuState<W> {
 
         let mut preds = Vec::new();
         let mut j = 0usize;
-        while j < NUM_PREDS
+        while j < num_preds
             invariant
-                j <= NUM_PREDS,
+                j <= num_preds,
                 preds.len() == j,
                 forall|k: int| 0 <= k < j ==> preds[k] == (k == 0),
-            decreases NUM_PREDS - j,
+            decreases num_preds - j,
         {
             preds.push(j == 0);
             j += 1;
@@ -60,28 +102,42 @@ impl<const W: usize> CpuState<W> {
 
         let mut memory = Vec::new();
         let mut k = 0usize;
-        while k < MEM_SIZE
+        while k < mem_size
             invariant
-                k <= MEM_SIZE,
+                k <= mem_size,
                 memory.len() == k,
                 forall|m: int| 0 <= m < k ==> memory[m] == 0u8,
-            decreases MEM_SIZE - k,
+            decreases mem_size - k,
         {
             memory.push(0u8);
             k += 1;
         }
 
-        CpuState { gprs, preds, pc: 0, cycle: 0, scoreboard, memory, halted: false, latencies }
+        CpuState {
+            width,
+            num_gprs,
+            num_preds,
+            mem_size,
+            gprs,
+            preds,
+            pc: 0,
+            cycle: 0,
+            scoreboard,
+            memory,
+            cache: CacheState::new(crate::cache::CacheConfig::default_l1d()),
+            halted: false,
+            latencies,
+        }
     }
 
     /// Read GPR at `idx`.
     pub fn read_gpr(&self, idx: usize) -> (ret: u64)
         requires self.wf(),
         ensures
-            idx == 0 || idx >= NUM_GPRS ==> ret == 0u64,
-            0 < idx < NUM_GPRS          ==> ret == self.gprs[idx as int],
+            idx == 0 || idx >= self.num_gprs ==> ret == 0u64,
+            0 < idx < self.num_gprs          ==> ret == self.gprs[idx as int],
     {
-        if idx == 0 || idx >= NUM_GPRS { 0u64 } else { self.gprs[idx] }
+        if idx == 0 || idx >= self.num_gprs { 0u64 } else { self.gprs[idx] }
     }
 
     /// Write GPR at `idx` with `val`.
@@ -95,14 +151,18 @@ impl<const W: usize> CpuState<W> {
             self.cycle      == old(self).cycle,
             self.halted     == old(self).halted,
             self.scoreboard == old(self).scoreboard,
-            idx == 0 || idx >= NUM_GPRS ==>
-                forall|i: int| 0 <= i < NUM_GPRS ==> self.gprs[i] == old(self).gprs[i],
-            0 < idx < NUM_GPRS ==> self.gprs[idx as int] == val,
-            0 < idx < NUM_GPRS ==>
-                forall|i: int| 0 <= i < NUM_GPRS && i != idx ==>
+            self.width      == old(self).width,
+            self.num_gprs   == old(self).num_gprs,
+            self.num_preds  == old(self).num_preds,
+            self.mem_size   == old(self).mem_size,
+            idx == 0 || idx >= old(self).num_gprs ==>
+                forall|i: int| 0 <= i < old(self).num_gprs ==> self.gprs[i] == old(self).gprs[i],
+            0 < idx < old(self).num_gprs ==> self.gprs[idx as int] == val,
+            0 < idx < old(self).num_gprs ==>
+                forall|i: int| 0 <= i < old(self).num_gprs && i != idx ==>
                     self.gprs[i] == old(self).gprs[i],
     {
-        if idx != 0 && idx < NUM_GPRS {
+        if idx != 0 && idx < self.num_gprs {
             self.gprs.set(idx, val);
         }
     }
@@ -112,10 +172,10 @@ impl<const W: usize> CpuState<W> {
         requires self.wf(),
         ensures
             idx == 0              ==> ret == true,
-            idx >= NUM_PREDS      ==> ret == false,
-            0 < idx < NUM_PREDS   ==> ret == self.preds[idx as int],
+            idx >= self.num_preds      ==> ret == false,
+            0 < idx < self.num_preds   ==> ret == self.preds[idx as int],
     {
-        if idx == 0 { true } else if idx < NUM_PREDS { self.preds[idx] } else { false }
+        if idx == 0 { true } else if idx < self.num_preds { self.preds[idx] } else { false }
     }
 
     /// Read an optional GPR source operand with the architectural r0/out-of-range behavior.
@@ -151,27 +211,19 @@ impl<const W: usize> CpuState<W> {
             self.cycle      == old(self).cycle,
             self.halted     == old(self).halted,
             self.scoreboard == old(self).scoreboard,
-            idx == 0 || idx >= NUM_PREDS ==>
-                forall|i: int| 0 <= i < NUM_PREDS ==> self.preds[i] == old(self).preds[i],
-            0 < idx < NUM_PREDS ==> self.preds[idx as int] == val,
-            0 < idx < NUM_PREDS ==>
-                forall|i: int| 0 <= i < NUM_PREDS && i != idx ==>
+            self.width      == old(self).width,
+            self.num_gprs   == old(self).num_gprs,
+            self.num_preds  == old(self).num_preds,
+            self.mem_size   == old(self).mem_size,
+            idx == 0 || idx >= old(self).num_preds ==>
+                forall|i: int| 0 <= i < old(self).num_preds ==> self.preds[i] == old(self).preds[i],
+            0 < idx < old(self).num_preds ==> self.preds[idx as int] == val,
+            0 < idx < old(self).num_preds ==>
+                forall|i: int| 0 <= i < old(self).num_preds && i != idx ==>
                     self.preds[i] == old(self).preds[i],
     {
-        if idx != 0 && idx < NUM_PREDS {
+        if idx != 0 && idx < self.num_preds {
             self.preds.set(idx, val);
-        }
-    }
-
-    /// Expected slot class for a slot index in a bundle.
-    fn slot_class_for_index(slot: usize) -> (ret: SlotClass)
-        ensures
-            ret == spec_slot_class_for_index(slot as int),
-    {
-        match slot % 4 {
-            0 | 1 => SlotClass::Integer,
-            2 => SlotClass::Memory,
-            _ => SlotClass::Control,
         }
     }
 
@@ -190,7 +242,10 @@ impl<const W: usize> CpuState<W> {
         op == Opcode::Srl  || op == Opcode::Sra  || op == Opcode::Mov ||
         op == Opcode::MovImm || op == Opcode::Mul || op == Opcode::MulH ||
         op == Opcode::Lea  || op == Opcode::LoadB || op == Opcode::LoadH ||
-        op == Opcode::LoadW || op == Opcode::LoadD
+        op == Opcode::LoadW || op == Opcode::LoadD ||
+        op == Opcode::FpAdd32 || op == Opcode::FpMul32 ||
+        op == Opcode::FpAdd64 || op == Opcode::FpMul64 ||
+        op == Opcode::AesEnc || op == Opcode::AesDec
     }
 
     fn opcode_gpr_write_dst(op: Opcode, dst: Option<usize>) -> (ret: Option<usize>)

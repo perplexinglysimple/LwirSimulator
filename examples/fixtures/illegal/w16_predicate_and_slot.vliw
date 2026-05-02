@@ -1,0 +1,71 @@
+# expected-rules: same-bundle-pred-hazard, slot-opcode-legality
+.processor {
+  width 16
+
+  hardware {
+    unit alu = integer_alu
+    unit mem = memory
+    unit ctrl = control
+    unit mul = multiplier
+  }
+
+  layout slots {
+    0 = { alu }
+    1 = { alu }
+    2 = { mem }
+    3 = { ctrl, mul }
+    4 = { alu }
+    5 = { alu }
+    6 = { mem }
+    7 = { ctrl, mul }
+    8 = { alu }
+    9 = { alu }
+    10 = { mem }
+    11 = { ctrl, mul }
+    12 = { alu }
+    13 = { alu }
+    14 = { mem }
+    15 = { ctrl, mul }
+  }
+
+  cache { }
+  topology { cpus 1 }
+}
+{
+  0: cmplt p1, r0, r0
+  1: nop
+  2: nop
+  3: branch p1, done
+  4: nop
+  5: nop
+  6: nop
+  7: nop
+  8: nop
+  9: nop
+  10: nop
+  11: nop
+  12: nop
+  13: nop
+  14: add r2, r0, r0
+  15: nop
+}
+
+done:
+{
+  0: nop
+  1: nop
+  2: nop
+  3: nop
+  4: nop
+  5: nop
+  6: nop
+  7: nop
+  8: nop
+  9: nop
+  10: nop
+  11: nop
+  12: nop
+  13: nop
+  14: nop
+  15: ret
+}

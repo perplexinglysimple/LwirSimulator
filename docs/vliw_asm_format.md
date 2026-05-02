@@ -1,15 +1,16 @@
-# LWIR Assembly Format (Stable Bundle-Level IR)
+# VLIW Assembly Format (Stable Bundle-Level IR)
 
-This document defines the stable text format emitted by the LLVM backend for the LWIR simulator.
+This document defines the stable text format emitted by the LLVM backend for the VLIW simulator.
 
 ## 1. File structure
 
 A file is plain text with optional comments and labels.
 
 - Comments start with `#` and run to end-of-line.
-- Optional width directive:
-  - `.width <N>`
-  - Must match simulator/parser width parameter (`parse_program::<N>`).
+- Mandatory processor header:
+  - `.processor { ... }`
+  - Must declare `width`, hardware units, `layout slots`, cache config, and `topology { cpus 1 }`.
+  - Legacy `.width <N>` files are rejected.
 - Program is a sequence of **bundles**.
 
 ## 2. Bundle encodings
@@ -41,6 +42,32 @@ A `{ ... }` block = one bundle. Each line inside names one slot.
 
 Labels map to bundle indices (not byte offsets).
 
+## Processor Cache
+
+`cache { }` remains accepted and uses the default direct-mapped L1D configuration:
+64-byte lines, 4 KiB capacity, hit latency 1, miss latency 3, and no dirty
+writeback penalty.
+
+Concrete direct-mapped L1D config is also supported:
+
+```text
+cache {
+  l1d {
+    line_bytes 64
+    capacity 4096
+    associativity 1
+    write_policy write_back
+    hit_latency 1
+    miss_latency 12
+    writeback_latency 12
+  }
+}
+```
+
+Load latency is derived from the cache. Stores update the cache line and dirty
+bit, while their visible opcode latency still comes from the non-load latency
+table.
+
 ```text
 start:
 {
@@ -67,7 +94,7 @@ Slots can be written as symbolic names or numeric indices.
 - Symbolic: `i0`, `i1`, `m`, `x`.
 - Numeric: `0..W-1`.
 
-For wider bundles, numeric slots are recommended; architectural classes repeat every 4 slots (`I, I, M, X`).
+For wider bundles, numeric slots are recommended. The canonical stage-0 layout repeats every 4 slots (`I, I, M, X`) by assigning `alu`, `alu`, `mem`, and `ctrl, mul` units.
 
 ## 5. Predication syntax
 
@@ -82,7 +109,7 @@ Example:
 i0 [p1] movi r4, 1 | i1 [!p1] movi r4, 0
 ```
 
-The runtime accepts complementary predicated writes to the same destination because exactly one slot is active per cycle. The static verifier (`lwir_verify`) is deliberately conservative: it does not evaluate guard predicates and treats all non-nop syllables as unconditionally active. The pattern above would be flagged as a same-bundle WAW. Compilers targeting `lwir_verify` must avoid same-destination writes within a bundle regardless of guard complementarity.
+The runtime accepts complementary predicated writes to the same destination because exactly one slot is active per cycle. The static verifier (`vliw_verify`) is deliberately conservative: it does not evaluate guard predicates and treats all non-nop syllables as unconditionally active. The pattern above would be flagged as a same-bundle WAW. Compilers targeting `vliw_verify` must avoid same-destination writes within a bundle regardless of guard complementarity.
 
 Branch is special and carries predicate as an operand:
 
@@ -132,7 +159,26 @@ Assembly syntax validity is necessary but not sufficient. Backend output must al
 ## 9. Minimal canonical example
 
 ```text
-.width 4
+.processor {
+  width 4
+
+  hardware {
+    unit alu = integer_alu
+    unit mem = memory
+    unit ctrl = control
+    unit mul = multiplier
+  }
+
+  layout slots {
+    0 = { alu }
+    1 = { alu }
+    2 = { mem }
+    3 = { ctrl, mul }
+  }
+
+  cache { }
+  topology { cpus 1 }
+}
 
 entry:
 {

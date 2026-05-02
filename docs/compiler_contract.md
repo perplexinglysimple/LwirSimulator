@@ -1,6 +1,6 @@
-# LWIR Compiler/Scheduler Contract
+# VLIW Compiler/Scheduler Contract
 
-This document defines the **minimum legality contract** that the compiler must satisfy before the simulator will accept and execute a `.lwir` / `.lwirasm` program.
+This document defines the **minimum legality contract** that the compiler must satisfy before the simulator will accept and execute a `.vliw` / `.vliwasm` program.
 
 The intent is to make compiler bring-up unambiguous: if a bundle stream violates any rule below, it is outside contract and may be rejected (halted) by the simulator or by an upcoming offline verifier.
 
@@ -25,9 +25,9 @@ The emitted program must target a valid bundle width from this set:
 **Why:** simulator data structures and issuance rules assume these widths.
 
 **Enforcement mapping:**
-- Existing check: source-level `.width` must match parser instantiation width (`parse_program::<W>`). If mismatched, parse fails.
-- Existing invariant: `Bundle<W>` is only intended for valid widths via `is_valid_width` and `nop_bundle` precondition.
-- Planned verifier check: reject programs that declare unsupported width before simulator instantiation.
+- Existing check: the mandatory `.processor { ... }` header declares the runtime width and must use a supported value.
+- Existing invariant: runtime `Bundle` construction uses `is_valid_width` and `nop_bundle(width)` preconditions.
+- Existing verifier check: malformed or unsupported processor layouts fail during parsing before simulation or static verification.
 
 ### 2) Each slot contains only legal opcodes for that slot class
 
@@ -50,7 +50,7 @@ Formally, for active `i < j`, if `slot i` writes `rD (rD != r0)`, including `cal
 
 **Enforcement mapping:**
 - Existing simulator check: `CpuState::bundle_is_legal` pairwise hazard scan (active syllables only).
-- Static verifier (`lwir_verify`): conservative — guard predicates are not evaluated. Every non-nop syllable is treated as unconditionally active, so the check applies to all pairs regardless of guards. Programs with complementary predicated writes to the same destination (e.g., `[p1] mov rD, ... | [!p1] mov rD, ...`) are accepted by the simulator but rejected by the static verifier.
+- Static verifier (`vliw_verify`): conservative — guard predicates are not evaluated. Every non-nop syllable is treated as unconditionally active, so the check applies to all pairs regardless of guards. Programs with complementary predicated writes to the same destination (e.g., `[p1] mov rD, ... | [!p1] mov rD, ...`) are accepted by the simulator but rejected by the static verifier.
 
 ### 4) No same-bundle WAW hazards
 
@@ -61,7 +61,7 @@ Within one bundle, two active syllables must not both write the same architectur
 
 **Enforcement mapping:**
 - Existing simulator check: `CpuState::bundle_is_legal` rejects same-destination writes (active syllables only).
-- Static verifier (`lwir_verify`): conservative — same-destination writes are rejected for all syllable pairs regardless of guard predicates. See rule 3 note.
+- Static verifier (`vliw_verify`): conservative — same-destination writes are rejected for all syllable pairs regardless of guard predicates. See rule 3 note.
 
 ### 5) No same-bundle predicate hazards
 
@@ -73,7 +73,7 @@ Includes:
 
 **Enforcement mapping:**
 - Existing simulator check: `CpuState::bundle_is_legal` checks predicate RAW/WAW (active syllables only).
-- Static verifier (`lwir_verify`): conservative — guard predicates are not evaluated. See rule 3 note.
+- Static verifier (`vliw_verify`): conservative — guard predicates are not evaluated. See rule 3 note.
 
 ### 6) GPR reads only occur after producer ready cycle
 
@@ -113,7 +113,7 @@ If not ready, the bundle is not executable this cycle (simulator stalls one cycl
 
 | Contract rule | Existing simulator check | Planned verifier check |
 |---|---|---|
-| Valid bundle width | Parser `.width` agreement and bundle construction invariants | Front-end width gate |
+| Valid bundle width | Processor-layout parse check and bundle construction invariants | Front-end width gate |
 | Slot opcode legality | `bundle_is_legal` slot-class match | Static per-slot class validator |
 | Same-bundle GPR RAW | `bundle_is_legal` | Static bundle hazard pass |
 | Same-bundle GPR WAW | `bundle_is_legal` | Static bundle hazard pass |
@@ -122,11 +122,11 @@ If not ready, the bundle is not executable this cycle (simulator stalls one cycl
 | Control-in-X restriction | `bundle_is_legal` via slot class | Dedicated control-placement diagnostic |
 | Memory-in-M restriction | `bundle_is_legal` via slot class | Dedicated memory-placement diagnostic |
 
-## Practical definition of a legal `.lwir` program
+## Practical definition of a legal `.vliw` program
 
 A program is legal for simulator acceptance if:
 
-1. It parses successfully for the chosen width `W`.
+1. It parses successfully with a valid `.processor { ... }` layout.
 2. Every bundle satisfies slot-class and same-bundle hazard rules.
 3. At runtime, when a bundle is issued, each active GPR source is scoreboard-ready (otherwise the machine may stall until ready).
 

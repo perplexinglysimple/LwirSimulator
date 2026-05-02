@@ -1,23 +1,21 @@
-/// Command-line runner for the LWIR VLIW simulator.
-///
-/// The binary currently consumes a simple text assembly format. That format is
-/// intentionally lightweight so compiler work can start before a binary object
-/// format exists.
-use lwir_simulator::asm::parse_program;
-use lwir_simulator::cpu::{print_cpu_state, CpuState};
-use lwir_simulator::isa::Opcode;
-use lwir_simulator::latency::LatencyTable;
+// Command-line runner for the VLIW simulator.
+//
+// The binary currently consumes a simple text assembly format. That format is
+// intentionally lightweight so compiler work can start before a binary object
+// format exists.
 use std::env;
 use std::fs;
 use std::process::ExitCode;
-
-const DEFAULT_WIDTH: usize = 4;
-const SUPPORTED_WIDTHS: &str = "4, 8, 16, 32, 64, 128, 256";
+use vliw_simulator::asm::parse_program;
+use vliw_simulator::cpu::{print_cpu_state, CpuState};
+use vliw_simulator::isa::Opcode;
+use vliw_simulator::latency::LatencyTable;
+use vliw_simulator::system::System;
 
 fn main() -> ExitCode {
     let exe = env::args()
         .next()
-        .unwrap_or_else(|| "lwir_simulator".to_string());
+        .unwrap_or_else(|| "vliw_simulator".to_string());
     let mut trace = false;
     let mut path = None::<String>;
 
@@ -30,17 +28,17 @@ fn main() -> ExitCode {
             }
             _ if path.is_none() => path = Some(arg),
             _ => {
-                eprintln!("usage: {exe} [--trace] <program.lwir>");
+                eprintln!("usage: {exe} [--trace] <program.vliw>");
                 return ExitCode::from(2);
             }
         }
     }
 
     let Some(path) = path else {
-        eprintln!("usage: {exe} [--trace] <program.lwir>");
+        eprintln!("usage: {exe} [--trace] <program.vliw>");
         eprintln!("example:");
-        eprintln!("  {exe} examples/hello.lwir");
-        eprintln!("  {exe} --trace examples/hello.lwir");
+        eprintln!("  {exe} examples/hello.vliw");
+        eprintln!("  {exe} --trace examples/hello.vliw");
         return ExitCode::from(2);
     };
 
@@ -51,32 +49,7 @@ fn main() -> ExitCode {
             return ExitCode::from(1);
         }
     };
-    let width = match declared_width(&source) {
-        Ok(Some(width)) => width,
-        Ok(None) => DEFAULT_WIDTH,
-        Err(err) => {
-            eprintln!("failed to parse `{path}`: {err}");
-            return ExitCode::from(1);
-        }
-    };
-
-    match width {
-        4 => run_for_width::<4>(&path, &source, trace),
-        8 => run_for_width::<8>(&path, &source, trace),
-        16 => run_for_width::<16>(&path, &source, trace),
-        32 => run_for_width::<32>(&path, &source, trace),
-        64 => run_for_width::<64>(&path, &source, trace),
-        128 => run_for_width::<128>(&path, &source, trace),
-        256 => run_for_width::<256>(&path, &source, trace),
-        _ => {
-            eprintln!("unsupported width {width}; supported widths are: {SUPPORTED_WIDTHS}");
-            ExitCode::from(1)
-        }
-    }
-}
-
-fn run_for_width<const W: usize>(path: &str, source: &str, trace: bool) -> ExitCode {
-    let program = match parse_program::<W>(source) {
+    let program = match parse_program(&source) {
         Ok(program) => program,
         Err(err) => {
             eprintln!("failed to parse `{path}`: {err}");
@@ -84,55 +57,42 @@ fn run_for_width<const W: usize>(path: &str, source: &str, trace: bool) -> ExitC
         }
     };
 
-    let mut latencies = LatencyTable::default();
-    latencies.set(Opcode::Mul, 5);
-    let mut cpu = CpuState::<W>::new(latencies);
+    if program.layout.topology.cpus != 1 {
+        eprintln!(
+            "failed to run `{path}`: topology declares {} CPUs, but the CLI accepts one program file",
+            program.layout.topology.cpus
+        );
+        return ExitCode::from(1);
+    }
 
     if trace {
-        let trace = cpu.trace_program(&program);
+        let mut latencies = LatencyTable::default();
+        latencies.set(Opcode::Mul, 5);
+        let mut cpu = CpuState::new_for_layout(&program.layout, latencies);
+        let trace = cpu.trace_program(&program.layout, &program.bundles);
         print!("{trace}");
         return ExitCode::SUCCESS;
     }
 
-    println!("LWIR VLIW Simulator (W={W})");
+    println!("VLIW Simulator (W={})", program.layout.width);
     println!("Program: {path}");
-    println!("Bundles: {}", program.len());
+    println!("Bundles: {}", program.bundles.len());
 
-    while cpu.step(&program) {}
-    print_cpu_state(&cpu);
+    let mut latencies = LatencyTable::default();
+    latencies.set(Opcode::Mul, 5);
+    let mut system = match System::from_program(program, latencies) {
+        Ok(system) => system,
+        Err(err) => {
+            eprintln!("failed to initialize system for `{path}`: {err}");
+            return ExitCode::from(1);
+        }
+    };
+    system.run_until_quiescent();
+    print_cpu_state(&system.cpus[0]);
     ExitCode::SUCCESS
 }
 
 fn print_usage(exe: &str) {
-    eprintln!("usage: {exe} [--trace] <program.lwir>");
+    eprintln!("usage: {exe} [--trace] <program.vliw>");
     eprintln!("  --trace   emit deterministic per-bundle execution trace");
-}
-
-fn declared_width(source: &str) -> Result<Option<usize>, String> {
-    for (idx, raw_line) in source.lines().enumerate() {
-        let line_no = idx + 1;
-        let line = strip_comment(raw_line).trim();
-        if !line.starts_with(".width") {
-            continue;
-        }
-
-        let width = line
-            .strip_prefix(".width")
-            .map(str::trim)
-            .filter(|s| !s.is_empty())
-            .ok_or_else(|| format!("line {line_no}: expected `.width <n>`"))?;
-        let parsed_width = width
-            .parse::<usize>()
-            .map_err(|_| format!("line {line_no}: invalid width `{width}`"))?;
-        return Ok(Some(parsed_width));
-    }
-
-    Ok(None)
-}
-
-fn strip_comment(line: &str) -> &str {
-    match line.find('#') {
-        Some(idx) => &line[..idx],
-        None => line,
-    }
 }

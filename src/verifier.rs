@@ -1,4 +1,4 @@
-/// Independent static verifier for LWIR programs.
+/// Independent static verifier for VLIW programs.
 ///
 /// Checks all rules from docs/compiler_contract.md without executing the program.
 /// Produces a list of Diagnostics; an empty list means the program is clean.
@@ -9,9 +9,11 @@
 /// spec implies the corresponding runtime pairwise condition for any pair of
 /// syllables that are both active in a given CPU state.
 use crate::bundle::Bundle;
-use crate::cpu::{CpuState, NUM_GPRS, NUM_PREDS};
-use crate::isa::{Opcode, SlotClass};
+use crate::cpu::CpuState;
+use crate::isa::Opcode;
 use crate::latency::LatencyTable;
+use crate::layout::ProcessorLayout;
+use crate::system::{bus_owner, bus_slot, is_memory_opcode, system_worst_case_load_latency};
 use builtin::*;
 use builtin_macros::*;
 use vstd::prelude::*;
@@ -20,42 +22,44 @@ use vstd::prelude::*;
 // Private exec helpers (outside verus! — trusted via verify_program's postcondition)
 // ---------------------------------------------------------------------------
 
-fn check_slot_legality<const W: usize>(
+fn check_slot_legality(
+    layout: &ProcessorLayout,
     bidx: usize,
-    bundle: &Bundle<W>,
+    bundle: &Bundle,
     diags: &mut Vec<Diagnostic>,
 ) {
     for (slot, syl) in bundle.syllables.iter().enumerate() {
         if syl.opcode == Opcode::Nop {
             continue;
         }
-        let expected = slot_class_for_index(slot);
-        let actual = syl.opcode.slot_class();
-        if actual != expected {
+        if !layout.slot_can_execute(slot, syl.opcode) {
             diags.push(Diagnostic {
                 bundle_idx: bidx,
                 slot,
                 rule: Rule::SlotOpcodeLegality,
                 message: format!(
                     "bundle {bidx} slot {slot}: \
-                     `{}` is a {} op but slot {slot} is a {} slot",
+                     `{}` is not executable by the units declared for slot {slot}",
                     opcode_name(syl.opcode),
-                    slot_class_name(actual),
-                    slot_class_name(expected),
                 ),
             });
         }
     }
 }
 
-fn check_gpr_hazards<const W: usize>(bidx: usize, bundle: &Bundle<W>, diags: &mut Vec<Diagnostic>) {
+fn check_gpr_hazards(
+    layout: &ProcessorLayout,
+    bidx: usize,
+    bundle: &Bundle,
+    diags: &mut Vec<Diagnostic>,
+) {
     let n = bundle.syllables.len();
     for i in 0..n {
         let ei = &bundle.syllables[i];
         let Some(dst) = gpr_write_dst(ei.opcode, ei.dst) else {
             continue;
         };
-        if dst == 0 || dst >= NUM_GPRS {
+        if dst == 0 || dst >= layout.arch.gprs {
             continue;
         }
         for j in (i + 1)..n {
@@ -102,9 +106,10 @@ fn check_gpr_hazards<const W: usize>(bidx: usize, bundle: &Bundle<W>, diags: &mu
     }
 }
 
-fn check_pred_hazards<const W: usize>(
+fn check_pred_hazards(
+    layout: &ProcessorLayout,
     bidx: usize,
-    bundle: &Bundle<W>,
+    bundle: &Bundle,
     diags: &mut Vec<Diagnostic>,
 ) {
     let n = bundle.syllables.len();
@@ -116,7 +121,7 @@ fn check_pred_hazards<const W: usize>(
         let Some(dst) = ei.dst else {
             continue;
         };
-        if dst == 0 || dst >= NUM_PREDS {
+        if dst == 0 || dst >= layout.arch.preds {
             continue;
         }
         for j in (i + 1)..n {
@@ -153,9 +158,10 @@ fn check_pred_hazards<const W: usize>(
     }
 }
 
-fn check_gpr_timing<const W: usize>(
+fn check_gpr_timing(
+    layout: &ProcessorLayout,
     bidx: usize,
-    bundle: &Bundle<W>,
+    bundle: &Bundle,
     issue_cycle: u64,
     ready_at: &[u64],
     diags: &mut Vec<Diagnostic>,
@@ -164,7 +170,7 @@ fn check_gpr_timing<const W: usize>(
     for (slot, syl) in bundle.syllables.iter().enumerate() {
         for src_opt in &syl.src {
             if let Some(r) = *src_opt {
-                if r > 0 && r < NUM_GPRS && ready_at[r] > next_cycle {
+                if r > 0 && r < layout.arch.gprs && ready_at[r] > next_cycle {
                     diags.push(Diagnostic {
                         bundle_idx: bidx,
                         slot,
@@ -196,8 +202,34 @@ fn check_gpr_timing<const W: usize>(
     }
 }
 
-fn update_ready_at<const W: usize>(
-    bundle: &Bundle<W>,
+fn check_bus_slot_conflicts(
+    layout: &ProcessorLayout,
+    cpu_id: usize,
+    bidx: usize,
+    bundle: &Bundle,
+    issue_cycle: u64,
+    diags: &mut Vec<Diagnostic>,
+) {
+    for (slot, syl) in bundle.syllables.iter().enumerate() {
+        if is_memory_opcode(syl.opcode) && !bus_slot(issue_cycle, cpu_id, layout.topology.cpus) {
+            diags.push(Diagnostic {
+                bundle_idx: bidx,
+                slot,
+                rule: Rule::BusSlotConflict,
+                message: format!(
+                    "bundle {bidx} slot {slot}: `{}` issues on cycle {issue_cycle}, \
+                     but bus owner is CPU {} and this program is CPU {cpu_id}",
+                    opcode_name(syl.opcode),
+                    bus_owner(issue_cycle, layout.topology.cpus)
+                ),
+            });
+        }
+    }
+}
+
+fn update_ready_at(
+    layout: &ProcessorLayout,
+    bundle: &Bundle,
     issue_cycle: u64,
     latencies: &LatencyTable,
     ready_at: &mut Vec<u64>,
@@ -205,8 +237,16 @@ fn update_ready_at<const W: usize>(
     let write_cycle = issue_cycle + 1;
     for syl in &bundle.syllables {
         if let Some(dst) = gpr_write_dst(syl.opcode, syl.dst) {
-            if dst > 0 && dst < NUM_GPRS {
-                let lat = latencies.get(syl.opcode) as u64;
+            if dst > 0 && dst < ready_at.len() {
+                let lat = if is_load_opcode_for_timing(syl.opcode) {
+                    system_worst_case_load_latency(
+                        layout.topology.cpus,
+                        1,
+                        layout.cache.worst_case_load_latency(),
+                    )
+                } else {
+                    latencies.get(syl.opcode)
+                } as u64;
                 let new_ready = write_cycle + lat;
                 if new_ready > ready_at[dst] {
                     ready_at[dst] = new_ready;
@@ -216,12 +256,11 @@ fn update_ready_at<const W: usize>(
     }
 }
 
-fn slot_class_for_index(slot: usize) -> SlotClass {
-    match slot % 4 {
-        0 | 1 => SlotClass::Integer,
-        2 => SlotClass::Memory,
-        _ => SlotClass::Control,
-    }
+fn is_load_opcode_for_timing(op: Opcode) -> bool {
+    matches!(
+        op,
+        Opcode::LoadB | Opcode::LoadH | Opcode::LoadW | Opcode::LoadD
+    )
 }
 
 fn gpr_write_dst(op: Opcode, dst: Option<usize>) -> Option<usize> {
@@ -269,15 +308,13 @@ fn opcode_name(op: Opcode) -> &'static str {
         Opcode::POr => "por",
         Opcode::PXor => "pxor",
         Opcode::PNot => "pnot",
+        Opcode::FpAdd32 => "fpadd32",
+        Opcode::FpMul32 => "fpmul32",
+        Opcode::FpAdd64 => "fpadd64",
+        Opcode::FpMul64 => "fpmul64",
+        Opcode::AesEnc => "aesenc",
+        Opcode::AesDec => "aesdec",
         Opcode::Nop => "nop",
-    }
-}
-
-fn slot_class_name(sc: SlotClass) -> &'static str {
-    match sc {
-        SlotClass::Integer => "Integer",
-        SlotClass::Memory => "Memory",
-        SlotClass::Control => "Control",
     }
 }
 
@@ -304,6 +341,8 @@ pub enum Rule {
     SameBundlePredHazard,
     /// Rule 6: a GPR source register is not yet ready when this bundle issues (stall-free timing).
     GprReadyCycle,
+    /// A memory syllable is scheduled on a cycle not owned by this CPU's bus slot.
+    BusSlotConflict,
 }
 
 /// A single violation found by the verifier.
@@ -324,23 +363,21 @@ pub struct Diagnostic {
 // Each predicate is factored into a per-slot/per-pair helper so that the
 // forall bodies have a single function-call term to use as a Verus trigger.
 
-pub open spec fn spec_slot_ok_in<const W: usize>(bundle: &Bundle<W>, slot: int) -> bool {
-    bundle.syllables[slot].opcode == Opcode::Nop ||
-    crate::isa::spec_slot_class(bundle.syllables[slot].opcode)
-        == crate::cpu::spec_slot_class_for_index(slot)
+pub open spec fn spec_slot_ok_in(layout: &ProcessorLayout, bundle: &Bundle, slot: int) -> bool {
+    crate::layout::layout_slot_accepts_opcode(layout, slot, bundle.syllables[slot].opcode)
 }
 
 /// A bundle has no slot-opcode legality violations under the conservative contract
 /// (all syllables treated as unconditionally active).
-pub open spec fn spec_bundle_slot_ok<const W: usize>(bundle: &Bundle<W>) -> bool {
+pub open spec fn spec_bundle_slot_ok(layout: &ProcessorLayout, bundle: &Bundle) -> bool {
     forall|slot: int| 0 <= slot < bundle.syllables.len() ==>
-        #[trigger] spec_slot_ok_in::<W>(bundle, slot)
+        #[trigger] spec_slot_ok_in(layout, bundle, slot)
 }
 
-pub open spec fn spec_gpr_pair_ok_in<const W: usize>(bundle: &Bundle<W>, i: int, j: int) -> bool {
+pub open spec fn spec_gpr_pair_ok_in(layout: &ProcessorLayout, bundle: &Bundle, i: int, j: int) -> bool {
     match crate::cpu::spec_gpr_write_dst(bundle.syllables[i].opcode, bundle.syllables[i].dst) {
         None      => true,
-        Some(dst) => dst == 0 || dst >= NUM_GPRS || (
+        Some(dst) => dst == 0 || dst >= layout.arch.gprs || (
             bundle.syllables[j].src[0] != Some(dst) &&
             bundle.syllables[j].src[1] != Some(dst) &&
             !(bundle.syllables[j].opcode == Opcode::Ret && dst == 31) &&
@@ -356,17 +393,17 @@ pub open spec fn spec_gpr_pair_ok_in<const W: usize>(bundle: &Bundle<W>, i: int,
 }
 
 /// A bundle has no same-bundle GPR RAW or WAW hazards under the conservative contract.
-pub open spec fn spec_bundle_gpr_hazard_free<const W: usize>(bundle: &Bundle<W>) -> bool {
+pub open spec fn spec_bundle_gpr_hazard_free(layout: &ProcessorLayout, bundle: &Bundle) -> bool {
     forall|i: int, j: int| 0 <= i < j < bundle.syllables.len() ==>
-        #[trigger] spec_gpr_pair_ok_in::<W>(bundle, i, j)
+        #[trigger] spec_gpr_pair_ok_in(layout, bundle, i, j)
 }
 
-pub open spec fn spec_pred_pair_ok_in<const W: usize>(bundle: &Bundle<W>, i: int, j: int) -> bool {
+pub open spec fn spec_pred_pair_ok_in(layout: &ProcessorLayout, bundle: &Bundle, i: int, j: int) -> bool {
     let ei = bundle.syllables[i];
     let lj = bundle.syllables[j];
     !crate::cpu::spec_opcode_writes_pred(ei.opcode) || match ei.dst {
         None      => true,
-        Some(dst) => dst == 0 || dst >= NUM_PREDS || (
+        Some(dst) => dst == 0 || dst >= layout.arch.preds || (
             !(crate::cpu::spec_opcode_reads_pred_src(lj.opcode) &&
               (lj.src[0] == Some(dst) || lj.src[1] == Some(dst))) &&
             !(lj.opcode == Opcode::Branch && lj.predicate == dst) &&
@@ -376,9 +413,9 @@ pub open spec fn spec_pred_pair_ok_in<const W: usize>(bundle: &Bundle<W>, i: int
 }
 
 /// A bundle has no same-bundle predicate hazards under the conservative contract.
-pub open spec fn spec_bundle_pred_hazard_free<const W: usize>(bundle: &Bundle<W>) -> bool {
+pub open spec fn spec_bundle_pred_hazard_free(layout: &ProcessorLayout, bundle: &Bundle) -> bool {
     forall|i: int, j: int| 0 <= i < j < bundle.syllables.len() ==>
-        #[trigger] spec_pred_pair_ok_in::<W>(bundle, i, j)
+        #[trigger] spec_pred_pair_ok_in(layout, bundle, i, j)
 }
 
 // --- Soundness lemmas (machine-checked by Verus/Z3) ---
@@ -390,26 +427,28 @@ pub open spec fn spec_bundle_pred_hazard_free<const W: usize>(bundle: &Bundle<W>
 // `CpuState::bundle_is_legal` in any reachable CPU state.
 
 /// Slot-legality conservatism: unconditional slot-ok implies active-slot-ok.
-pub proof fn lemma_slot_ok_implies_active_slot_legal<const W: usize>(
-    bundle: &Bundle<W>,
-    cpu: &CpuState<W>,
+pub proof fn lemma_slot_ok_implies_active_slot_legal(
+    layout: &ProcessorLayout,
+    bundle: &Bundle,
+    cpu: &CpuState,
     slot: int,
 )
     requires
         cpu.wf(),
         0 <= slot < bundle.syllables.len(),
         crate::cpu::spec_syl_active(cpu, &bundle.syllables[slot]),
-        spec_bundle_slot_ok::<W>(bundle),
+        spec_bundle_slot_ok(layout, bundle),
     ensures
-        spec_slot_ok_in::<W>(bundle, slot),
+        spec_slot_ok_in(layout, bundle, slot),
 {
-    assert(spec_slot_ok_in::<W>(bundle, slot));
+    assert(spec_slot_ok_in(layout, bundle, slot));
 }
 
 /// GPR-hazard conservatism: unconditional hazard-free implies active-pair hazard-free.
-pub proof fn lemma_gpr_hazard_free_implies_active_pair_ok<const W: usize>(
-    bundle: &Bundle<W>,
-    cpu: &CpuState<W>,
+pub proof fn lemma_gpr_hazard_free_implies_active_pair_ok(
+    layout: &ProcessorLayout,
+    bundle: &Bundle,
+    cpu: &CpuState,
     i: int,
     j: int,
 )
@@ -419,17 +458,18 @@ pub proof fn lemma_gpr_hazard_free_implies_active_pair_ok<const W: usize>(
         j < bundle.syllables.len(),
         crate::cpu::spec_syl_active(cpu, &bundle.syllables[i]),
         crate::cpu::spec_syl_active(cpu, &bundle.syllables[j]),
-        spec_bundle_gpr_hazard_free::<W>(bundle),
+        spec_bundle_gpr_hazard_free(layout, bundle),
     ensures
-        spec_gpr_pair_ok_in::<W>(bundle, i, j),
+        spec_gpr_pair_ok_in(layout, bundle, i, j),
 {
-    assert(spec_gpr_pair_ok_in::<W>(bundle, i, j));
+    assert(spec_gpr_pair_ok_in(layout, bundle, i, j));
 }
 
 /// Predicate-hazard conservatism: unconditional pred-hazard-free implies active-pair pred-hazard-free.
-pub proof fn lemma_pred_hazard_free_implies_active_pair_ok<const W: usize>(
-    bundle: &Bundle<W>,
-    cpu: &CpuState<W>,
+pub proof fn lemma_pred_hazard_free_implies_active_pair_ok(
+    layout: &ProcessorLayout,
+    bundle: &Bundle,
+    cpu: &CpuState,
     i: int,
     j: int,
 )
@@ -439,11 +479,11 @@ pub proof fn lemma_pred_hazard_free_implies_active_pair_ok<const W: usize>(
         j < bundle.syllables.len(),
         crate::cpu::spec_syl_active(cpu, &bundle.syllables[i]),
         crate::cpu::spec_syl_active(cpu, &bundle.syllables[j]),
-        spec_bundle_pred_hazard_free::<W>(bundle),
+        spec_bundle_pred_hazard_free(layout, bundle),
     ensures
-        spec_pred_pair_ok_in::<W>(bundle, i, j),
+        spec_pred_pair_ok_in(layout, bundle, i, j),
 {
-    assert(spec_pred_pair_ok_in::<W>(bundle, i, j));
+    assert(spec_pred_pair_ok_in(layout, bundle, i, j));
 }
 
 // --- Public entry point ---
@@ -454,26 +494,39 @@ pub proof fn lemma_pred_hazard_free_implies_active_pair_ok<const W: usize>(
 /// states what an empty result guarantees: every bundle satisfies the conservative
 /// spec predicates whose soundness is proved by the lemmas above.
 #[verifier::external_body]
-pub fn verify_program<const W: usize>(
-    program: &[Bundle<W>],
+pub fn verify_program(
+    layout: &ProcessorLayout,
+    program: &[Bundle],
     latencies: &LatencyTable,
+) -> (ret: Vec<Diagnostic>)
+{
+    verify_program_for_cpu(layout, program, latencies, 0)
+}
+
+#[verifier::external_body]
+pub fn verify_program_for_cpu(
+    layout: &ProcessorLayout,
+    program: &[Bundle],
+    latencies: &LatencyTable,
+    cpu_id: usize,
 ) -> (ret: Vec<Diagnostic>)
     ensures
         ret.len() == 0 ==> forall|k: int| 0 <= k < program.len() ==>
-            #[trigger] spec_bundle_slot_ok::<W>(&program[k]) &&
-            spec_bundle_gpr_hazard_free::<W>(&program[k]) &&
-            spec_bundle_pred_hazard_free::<W>(&program[k]),
+            #[trigger] spec_bundle_slot_ok(layout, &program[k]) &&
+            spec_bundle_gpr_hazard_free(layout, &program[k]) &&
+            spec_bundle_pred_hazard_free(layout, &program[k]),
 {
     let mut diags = Vec::new();
-    let mut ready_at = vec![0u64; NUM_GPRS];
+    let mut ready_at = vec![0u64; layout.arch.gprs];
 
     for (bidx, bundle) in program.iter().enumerate() {
         let issue_cycle = bidx as u64;
-        check_slot_legality::<W>(bidx, bundle, &mut diags);
-        check_gpr_hazards::<W>(bidx, bundle, &mut diags);
-        check_pred_hazards::<W>(bidx, bundle, &mut diags);
-        check_gpr_timing::<W>(bidx, bundle, issue_cycle, &ready_at, &mut diags);
-        update_ready_at::<W>(bundle, issue_cycle, latencies, &mut ready_at);
+        check_slot_legality(layout, bidx, bundle, &mut diags);
+        check_gpr_hazards(layout, bidx, bundle, &mut diags);
+        check_pred_hazards(layout, bidx, bundle, &mut diags);
+        check_gpr_timing(layout, bidx, bundle, issue_cycle, &ready_at, &mut diags);
+        check_bus_slot_conflicts(layout, cpu_id, bidx, bundle, issue_cycle, &mut diags);
+        update_ready_at(layout, bundle, issue_cycle, latencies, &mut ready_at);
     }
 
     diags

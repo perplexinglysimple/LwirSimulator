@@ -76,6 +76,7 @@ pub enum TraceMemoryEffect {
         address: usize,
         value: u64,
         in_bounds: bool,
+        cache_outcome: CacheOutcome,
     },
     Store {
         slot: usize,
@@ -83,6 +84,7 @@ pub enum TraceMemoryEffect {
         address: usize,
         value: u64,
         in_bounds: bool,
+        cache_outcome: CacheOutcome,
     },
 }
 
@@ -112,16 +114,16 @@ pub enum TraceControlFlow {
     },
 }
 
-impl<const W: usize> CpuState<W> {
+impl CpuState {
     /// Run until the program halts or PC leaves the program, returning a stable trace.
-    pub fn trace_program(&mut self, program: &[Bundle<W>]) -> TraceLog {
+    pub fn trace_program(&mut self, layout: &ProcessorLayout, program: &[Bundle]) -> TraceLog {
         let mut events = Vec::new();
-        while let Some(event) = self.step_trace(program) {
+        while let Some(event) = self.step_trace(layout, program) {
             events.push(event);
         }
 
         TraceLog {
-            width: W,
+            width: self.width,
             events,
             final_pc: self.pc,
             final_cycle: self.cycle,
@@ -130,7 +132,7 @@ impl<const W: usize> CpuState<W> {
     }
 
     /// Execute one traced bundle attempt. Returns `None` when no bundle can issue.
-    pub fn step_trace(&mut self, program: &[Bundle<W>]) -> Option<TraceEvent> {
+    pub fn step_trace(&mut self, layout: &ProcessorLayout, program: &[Bundle]) -> Option<TraceEvent> {
         if self.halted || self.pc >= program.len() {
             return None;
         }
@@ -139,7 +141,7 @@ impl<const W: usize> CpuState<W> {
         let cycle = self.cycle;
         let bundle = &program[self.pc];
 
-        if !self.bundle_is_legal(bundle) {
+        if !self.bundle_is_legal(layout, bundle) {
             self.halted = true;
             return Some(TraceEvent {
                 kind: TraceEventKind::IllegalBundle,
@@ -201,7 +203,7 @@ impl<const W: usize> CpuState<W> {
             self.execute_syllable(syl);
 
             if let Some(register) = gpr_write_dst_for_trace(syl) {
-                if register > 0 && register < NUM_GPRS {
+                if register > 0 && register < self.num_gprs {
                     gpr_writes.push(TraceGprWrite {
                         slot,
                         register,
@@ -213,7 +215,7 @@ impl<const W: usize> CpuState<W> {
 
             if syl.opcode.writes_pred() {
                 if let Some(predicate) = syl.dst {
-                    if predicate > 0 && predicate < NUM_PREDS {
+                    if predicate > 0 && predicate < self.num_preds {
                         pred_writes.push(TracePredWrite {
                             slot,
                             predicate,
@@ -244,7 +246,7 @@ impl<const W: usize> CpuState<W> {
         })
     }
 
-    fn collect_active_syllables(&self, bundle: &Bundle<W>) -> Vec<TraceActiveSyllable> {
+    fn collect_active_syllables(&self, bundle: &Bundle) -> Vec<TraceActiveSyllable> {
         let mut active = Vec::new();
         for (slot, syl) in bundle.syllables.iter().enumerate() {
             if syl.opcode != Opcode::Nop && self.syl_is_active_runtime(syl) {
@@ -254,7 +256,7 @@ impl<const W: usize> CpuState<W> {
         active
     }
 
-    fn collect_trace_stalls(&self, bundle: &Bundle<W>) -> Vec<TraceStall> {
+    fn collect_trace_stalls(&self, bundle: &Bundle) -> Vec<TraceStall> {
         let needed_cycle = self.cycle + 1;
         let mut stalls = Vec::new();
 
@@ -266,7 +268,7 @@ impl<const W: usize> CpuState<W> {
             for src in syl.src {
                 if let Some(register) = src {
                     if register > 0
-                        && register < NUM_GPRS
+                        && register < self.num_gprs
                         && self.scoreboard[register].ready_cycle > needed_cycle
                     {
                         stalls.push(TraceStall {
@@ -296,7 +298,7 @@ impl<const W: usize> CpuState<W> {
         let width_bytes = memory_width_bytes(syl.opcode)?;
         let base = self.read_src_gpr(syl.src[0]);
         let address = base.wrapping_add(syl.imm as u64) as usize;
-        let in_bounds = memory_access_in_bounds(address, width_bytes);
+        let in_bounds = memory_access_in_bounds(self.mem_size, address, width_bytes);
 
         if is_load_opcode(syl.opcode) {
             let value = match width_bytes {
@@ -312,6 +314,7 @@ impl<const W: usize> CpuState<W> {
                 address,
                 value,
                 in_bounds,
+                cache_outcome: self.cache.peek_outcome(address),
             })
         } else {
             let raw = self.read_src_gpr(syl.src[1]);
@@ -322,6 +325,7 @@ impl<const W: usize> CpuState<W> {
                 address,
                 value,
                 in_bounds,
+                cache_outcome: self.cache.peek_outcome(address),
             })
         }
     }
@@ -421,10 +425,11 @@ impl fmt::Display for TraceLog {
                         address,
                         value,
                         in_bounds,
+                        cache_outcome,
                     } => writeln!(
                         f,
-                        "  mem slot={} kind=load width={} addr={:#010x} value={:#018x} in_bounds={}",
-                        slot, width_bytes, address, value, in_bounds
+                        "  mem slot={} kind=load width={} addr={:#010x} value={:#018x} in_bounds={} cache={}",
+                        slot, width_bytes, address, value, in_bounds, format_cache_outcome(*cache_outcome)
                     )?,
                     TraceMemoryEffect::Store {
                         slot,
@@ -432,10 +437,11 @@ impl fmt::Display for TraceLog {
                         address,
                         value,
                         in_bounds,
+                        cache_outcome,
                     } => writeln!(
                         f,
-                        "  mem slot={} kind=store width={} addr={:#010x} value={:#018x} in_bounds={}",
-                        slot, width_bytes, address, value, in_bounds
+                        "  mem slot={} kind=store width={} addr={:#010x} value={:#018x} in_bounds={} cache={}",
+                        slot, width_bytes, address, value, in_bounds, format_cache_outcome(*cache_outcome)
                     )?,
                 }
             }
@@ -491,6 +497,14 @@ impl fmt::Display for TraceLog {
     }
 }
 
+fn format_cache_outcome(outcome: CacheOutcome) -> &'static str {
+    match outcome {
+        CacheOutcome::Hit => "hit",
+        CacheOutcome::Miss => "miss",
+        CacheOutcome::MissDirty => "miss_dirty",
+    }
+}
+
 impl TraceEventKind {
     fn as_str(self) -> &'static str {
         match self {
@@ -540,8 +554,8 @@ fn is_load_opcode(opcode: Opcode) -> bool {
     )
 }
 
-fn memory_access_in_bounds(address: usize, width_bytes: usize) -> bool {
-    width_bytes <= MEM_SIZE && address <= MEM_SIZE - width_bytes
+fn memory_access_in_bounds(mem_size: usize, address: usize, width_bytes: usize) -> bool {
+    width_bytes <= mem_size && address <= mem_size - width_bytes
 }
 
 fn mask_to_width(value: u64, width_bytes: usize) -> u64 {
@@ -618,6 +632,12 @@ fn opcode_mnemonic(op: Opcode) -> &'static str {
         Opcode::POr => "por",
         Opcode::PXor => "pxor",
         Opcode::PNot => "pnot",
+        Opcode::FpAdd32 => "fpadd32",
+        Opcode::FpMul32 => "fpmul32",
+        Opcode::FpAdd64 => "fpadd64",
+        Opcode::FpMul64 => "fpmul64",
+        Opcode::AesEnc => "aesenc",
+        Opcode::AesDec => "aesdec",
         Opcode::Nop => "nop",
     }
 }
