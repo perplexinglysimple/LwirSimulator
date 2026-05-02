@@ -7,6 +7,7 @@ use lwir_simulator::asm::parse_program;
 use lwir_simulator::cpu::{print_cpu_state, CpuState};
 use lwir_simulator::isa::Opcode;
 use lwir_simulator::latency::LatencyTable;
+use lwir_simulator::system::System;
 use std::env;
 use std::fs;
 use std::process::ExitCode;
@@ -56,11 +57,18 @@ fn main() -> ExitCode {
         }
     };
 
-    let mut latencies = LatencyTable::default();
-    latencies.set(Opcode::Mul, 5);
-    let mut cpu = CpuState::new_for_layout(&program.layout, latencies);
+    if program.layout.topology.cpus != 1 {
+        eprintln!(
+            "failed to run `{path}`: topology declares {} CPUs, but the CLI accepts one program file",
+            program.layout.topology.cpus
+        );
+        return ExitCode::from(1);
+    }
 
     if trace {
+        let mut latencies = LatencyTable::default();
+        latencies.set(Opcode::Mul, 5);
+        let mut cpu = CpuState::new_for_layout(&program.layout, latencies);
         let trace = cpu.trace_program(&program.layout, &program.bundles);
         print!("{trace}");
         return ExitCode::SUCCESS;
@@ -70,8 +78,17 @@ fn main() -> ExitCode {
     println!("Program: {path}");
     println!("Bundles: {}", program.bundles.len());
 
-    while cpu.step(&program.layout, &program.bundles) {}
-    print_cpu_state(&cpu);
+    let mut latencies = LatencyTable::default();
+    latencies.set(Opcode::Mul, 5);
+    let mut system = match System::from_program(program, latencies) {
+        Ok(system) => system,
+        Err(err) => {
+            eprintln!("failed to initialize system for `{path}`: {err}");
+            return ExitCode::from(1);
+        }
+    };
+    system.run_until_quiescent();
+    print_cpu_state(&system.cpus[0]);
     ExitCode::SUCCESS
 }
 

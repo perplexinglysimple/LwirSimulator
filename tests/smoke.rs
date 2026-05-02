@@ -4,6 +4,7 @@ use lwir_simulator::cpu::CpuState;
 use lwir_simulator::isa::{Opcode, Syllable};
 use lwir_simulator::latency::LatencyTable;
 use lwir_simulator::layout::{canonical_layout, ProcessorLayout};
+use lwir_simulator::system::System;
 
 const W: usize = 4;
 
@@ -206,6 +207,75 @@ fn hello_world_program_completes_and_writes_result() {
 
     let stored = u64::from_le_bytes(cpu.memory[0x100..0x108].try_into().unwrap());
     assert_eq!(stored, 42);
+}
+
+#[test]
+fn system_single_cpu_matches_direct_cpu_execution() {
+    let mut latencies = LatencyTable::default();
+    latencies.set(Opcode::Mul, 5);
+
+    let program = hello_world_program();
+    let mut direct = CpuState::new(W, latencies.clone());
+    while step(&mut direct, &program) {}
+
+    let layout = canonical_layout(W);
+    let mut system = System::new(layout, vec![program], latencies).unwrap();
+    system.run_until_quiescent();
+
+    let cpu = &system.cpus[0];
+    assert_eq!(system.cycle, direct.cycle);
+    assert_eq!(cpu.halted, direct.halted);
+    assert_eq!(cpu.pc, direct.pc);
+    assert_eq!(cpu.read_gpr(1), direct.read_gpr(1));
+    assert_eq!(cpu.read_gpr(2), direct.read_gpr(2));
+    assert_eq!(cpu.read_gpr(3), direct.read_gpr(3));
+    assert_eq!(
+        &system.memory.bytes()[0x100..0x108],
+        &direct.memory[0x100..0x108]
+    );
+}
+
+#[test]
+fn system_two_cpus_run_independent_programs_against_shared_memory() {
+    let mut layout = canonical_layout(W);
+    layout.topology.cpus = 2;
+
+    let mut cpu0_b0 = Bundle::nop_bundle(W);
+    cpu0_b0.set_slot(0, mov_imm(1, 0x11));
+    let mut cpu0_b1 = Bundle::nop_bundle(W);
+    cpu0_b1.set_slot(2, store_d(0, 1, 0x100));
+    let mut cpu0_b2 = Bundle::nop_bundle(W);
+    cpu0_b2.set_slot(3, ret());
+
+    let mut cpu1_b0 = Bundle::nop_bundle(W);
+    cpu1_b0.set_slot(0, mov_imm(1, 0x22));
+    let mut cpu1_b1 = Bundle::nop_bundle(W);
+    cpu1_b1.set_slot(2, store_d(0, 1, 0x108));
+    let mut cpu1_b2 = Bundle::nop_bundle(W);
+    cpu1_b2.set_slot(3, ret());
+
+    let mut system = System::new(
+        layout,
+        vec![
+            vec![cpu0_b0, cpu0_b1, cpu0_b2],
+            vec![cpu1_b0, cpu1_b1, cpu1_b2],
+        ],
+        LatencyTable::default(),
+    )
+    .unwrap();
+
+    system.run_until_quiescent();
+
+    assert_eq!(system.cycle, 3);
+    assert!(system.cpus[0].halted);
+    assert!(system.cpus[1].halted);
+    assert_eq!(system.cpus[0].read_gpr(1), 0x11);
+    assert_eq!(system.cpus[1].read_gpr(1), 0x22);
+
+    let stored0 = u64::from_le_bytes(system.memory.bytes()[0x100..0x108].try_into().unwrap());
+    let stored1 = u64::from_le_bytes(system.memory.bytes()[0x108..0x110].try_into().unwrap());
+    assert_eq!(stored0, 0x11);
+    assert_eq!(stored1, 0x22);
 }
 
 #[test]

@@ -80,7 +80,7 @@ pub struct ProcessorLayout {
 
 impl ProcessorLayout {
     pub fn validate(&self) -> (ret: bool)
-        ensures ret == (layout_well_formed(self) && topology_supported_in_stage0(self) && arch_supported(self)),
+        ensures ret == (layout_well_formed(self) && topology_supported(self) && arch_supported(self)),
     {
         if !is_valid_width_runtime(self.width) {
             return false;
@@ -88,7 +88,7 @@ impl ProcessorLayout {
         if self.slots.len() != self.width {
             return false;
         }
-        if !topology_supported_in_stage0_runtime(self) { return false; }
+        if !topology_supported_runtime(self) { return false; }
         if !arch_supported_runtime(self.arch) { return false; }
 
         let mut slot = 0usize;
@@ -97,7 +97,7 @@ impl ProcessorLayout {
                 slot <= self.slots.len(),
                 self.slots.len() == self.width,
                 crate::bundle::is_valid_width(self.width),
-                topology_supported_in_stage0(self),
+                topology_supported(self),
                 arch_supported(self),
                 forall|i: int| 0 <= i < slot ==> self.slots[i].units.len() > 0,
                 forall|i: int, j: int|
@@ -205,10 +205,10 @@ pub fn default_arch_config() -> ArchConfig {
     }
 }
 
-pub fn topology_supported_in_stage0_runtime(layout: &ProcessorLayout) -> (ret: bool)
-    ensures ret == topology_supported_in_stage0(layout),
+pub fn topology_supported_runtime(layout: &ProcessorLayout) -> (ret: bool)
+    ensures ret == topology_supported(layout),
 {
-    layout.topology.cpus == 1
+    layout.topology.cpus >= 1
 }
 
 pub fn arch_supported_runtime(arch: ArchConfig) -> (ret: bool)
@@ -319,8 +319,8 @@ pub open spec fn layout_well_formed(layout: &ProcessorLayout) -> bool {
             unit_name_exists(layout, layout.slots[i].units[j]@)
 }
 
-pub open spec fn topology_supported_in_stage0(layout: &ProcessorLayout) -> bool {
-    layout.topology.cpus == 1
+pub open spec fn topology_supported(layout: &ProcessorLayout) -> bool {
+    layout.topology.cpus >= 1
 }
 
 pub open spec fn arch_supported(layout: &ProcessorLayout) -> bool {

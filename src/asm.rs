@@ -241,9 +241,7 @@ fn parse_processor_block(lines: &[(usize, String)]) -> Result<ProcessorLayout, S
         return Err("invalid direct-mapped L1D cache configuration".to_string());
     }
     if !saw_topology {
-        return Err(
-            "processor block missing stage-0 `topology { cpus 1 }` placeholder".to_string(),
-        );
+        return Err("processor block missing `topology { cpus N }` declaration".to_string());
     }
     Ok(layout)
 }
