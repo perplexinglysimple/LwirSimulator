@@ -114,22 +114,26 @@ impl CpuState {
             Opcode::LoadD   => {
                 let a = src0.wrapping_add(imm) as usize;
                 let v = self.load64(a);
-                self.writeback(syl, v, lat);
+                let (_, load_lat) = self.cache.access_load(a);
+                self.writeback(syl, v, load_lat);
             }
             Opcode::LoadW   => {
                 let a = src0.wrapping_add(imm) as usize;
                 let v = self.load32(a);
-                self.writeback(syl, v as u64, lat);
+                let (_, load_lat) = self.cache.access_load(a);
+                self.writeback(syl, v as u64, load_lat);
             }
             Opcode::LoadH   => {
                 let a = src0.wrapping_add(imm) as usize;
                 let v = self.load16(a);
-                self.writeback(syl, v as u64, lat);
+                let (_, load_lat) = self.cache.access_load(a);
+                self.writeback(syl, v as u64, load_lat);
             }
             Opcode::LoadB   => {
                 let a = src0.wrapping_add(imm) as usize;
                 let v = self.load8(a);
-                self.writeback(syl, v as u64, lat);
+                let (_, load_lat) = self.cache.access_load(a);
+                self.writeback(syl, v as u64, load_lat);
             }
             Opcode::Lea     => self.writeback(syl, src0.wrapping_add(imm), lat),
             Opcode::FpAdd32 => {
@@ -215,10 +219,22 @@ impl CpuState {
         assert(src1 == spec_src(old(self), syl.src[1]));
         let a = src0.wrapping_add(imm) as usize;
         match syl.opcode {
-            Opcode::StoreD => self.store64(a, src1),
-            Opcode::StoreW => self.store32(a, src1 as u32),
-            Opcode::StoreH => self.store16(a, src1 as u16),
-            Opcode::StoreB => self.store8(a, src1 as u8),
+            Opcode::StoreD => {
+                self.cache.access_store(a);
+                self.store64(a, src1);
+            }
+            Opcode::StoreW => {
+                self.cache.access_store(a);
+                self.store32(a, src1 as u32);
+            }
+            Opcode::StoreH => {
+                self.cache.access_store(a);
+                self.store16(a, src1 as u16);
+            }
+            Opcode::StoreB => {
+                self.cache.access_store(a);
+                self.store8(a, src1 as u8);
+            }
             _ => {},
         }
     }

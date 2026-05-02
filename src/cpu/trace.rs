@@ -76,6 +76,7 @@ pub enum TraceMemoryEffect {
         address: usize,
         value: u64,
         in_bounds: bool,
+        cache_outcome: CacheOutcome,
     },
     Store {
         slot: usize,
@@ -83,6 +84,7 @@ pub enum TraceMemoryEffect {
         address: usize,
         value: u64,
         in_bounds: bool,
+        cache_outcome: CacheOutcome,
     },
 }
 
@@ -312,6 +314,7 @@ impl CpuState {
                 address,
                 value,
                 in_bounds,
+                cache_outcome: self.cache.peek_outcome(address),
             })
         } else {
             let raw = self.read_src_gpr(syl.src[1]);
@@ -322,6 +325,7 @@ impl CpuState {
                 address,
                 value,
                 in_bounds,
+                cache_outcome: self.cache.peek_outcome(address),
             })
         }
     }
@@ -421,10 +425,11 @@ impl fmt::Display for TraceLog {
                         address,
                         value,
                         in_bounds,
+                        cache_outcome,
                     } => writeln!(
                         f,
-                        "  mem slot={} kind=load width={} addr={:#010x} value={:#018x} in_bounds={}",
-                        slot, width_bytes, address, value, in_bounds
+                        "  mem slot={} kind=load width={} addr={:#010x} value={:#018x} in_bounds={} cache={}",
+                        slot, width_bytes, address, value, in_bounds, format_cache_outcome(*cache_outcome)
                     )?,
                     TraceMemoryEffect::Store {
                         slot,
@@ -432,10 +437,11 @@ impl fmt::Display for TraceLog {
                         address,
                         value,
                         in_bounds,
+                        cache_outcome,
                     } => writeln!(
                         f,
-                        "  mem slot={} kind=store width={} addr={:#010x} value={:#018x} in_bounds={}",
-                        slot, width_bytes, address, value, in_bounds
+                        "  mem slot={} kind=store width={} addr={:#010x} value={:#018x} in_bounds={} cache={}",
+                        slot, width_bytes, address, value, in_bounds, format_cache_outcome(*cache_outcome)
                     )?,
                 }
             }
@@ -488,6 +494,14 @@ impl fmt::Display for TraceLog {
             "final pc={} cycle={} halted={}",
             self.final_pc, self.final_cycle, self.final_halted
         )
+    }
+}
+
+fn format_cache_outcome(outcome: CacheOutcome) -> &'static str {
+    match outcome {
+        CacheOutcome::Hit => "hit",
+        CacheOutcome::Miss => "miss",
+        CacheOutcome::MissDirty => "miss_dirty",
     }
 }
 

@@ -1,4 +1,5 @@
 use crate::bundle::Bundle;
+use crate::cache::CacheConfig;
 use crate::isa::Opcode;
 use builtin::*;
 use builtin_macros::*;
@@ -49,10 +50,6 @@ pub struct UnitDecl {
 #[derive(Clone, PartialEq, Eq, Debug)]
 pub struct SlotSpec {
     pub units: Vec<String>,
-}
-
-#[derive(Clone, Copy, PartialEq, Eq, Debug)]
-pub struct CacheConfig {
 }
 
 pub const DEFAULT_NUM_GPRS: usize = 32;
@@ -604,7 +601,7 @@ pub fn canonical_layout(width: usize) -> ProcessorLayout {
         units,
         slots,
         arch: default_arch_config(),
-        cache: CacheConfig {},
+        cache: CacheConfig::default_l1d(),
         topology: TopologyConfig { cpus: 1 },
     }
 }

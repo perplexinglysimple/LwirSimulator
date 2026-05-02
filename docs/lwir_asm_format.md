@@ -9,7 +9,7 @@ A file is plain text with optional comments and labels.
 - Comments start with `#` and run to end-of-line.
 - Mandatory processor header:
   - `.processor { ... }`
-  - Must declare `width`, stage-0 hardware units, `layout slots`, `cache { }`, and `topology { cpus 1 }`.
+  - Must declare `width`, hardware units, `layout slots`, cache config, and `topology { cpus 1 }`.
   - Legacy `.width <N>` files are rejected.
 - Program is a sequence of **bundles**.
 
@@ -41,6 +41,32 @@ A `{ ... }` block = one bundle. Each line inside names one slot.
 ## 3. Labels
 
 Labels map to bundle indices (not byte offsets).
+
+## Processor Cache
+
+`cache { }` remains accepted and uses the default direct-mapped L1D configuration:
+64-byte lines, 4 KiB capacity, hit latency 1, miss latency 3, and no dirty
+writeback penalty.
+
+Concrete direct-mapped L1D config is also supported:
+
+```text
+cache {
+  l1d {
+    line_bytes 64
+    capacity 4096
+    associativity 1
+    write_policy write_back
+    hit_latency 1
+    miss_latency 12
+    writeback_latency 12
+  }
+}
+```
+
+Load latency is derived from the cache. Stores update the cache line and dirty
+bit, while their visible opcode latency still comes from the non-load latency
+table.
 
 ```text
 start:

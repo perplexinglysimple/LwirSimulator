@@ -483,6 +483,71 @@ fn back_to_back_latency1_ops_are_clean() {
 }
 
 #[test]
+fn verifier_uses_cache_worst_case_for_load_timing() {
+    let source = r#"
+.processor {
+  width 4
+
+  hardware {
+    unit alu = integer_alu
+    unit mem = memory
+    unit ctrl = control
+    unit mul = multiplier
+  }
+
+  layout slots {
+    0 = { alu }
+    1 = { alu }
+    2 = { mem }
+    3 = { ctrl, mul }
+  }
+
+  cache {
+    l1d {
+      line_bytes 64
+      capacity 64
+      associativity 1
+      write_policy write_back
+      hit_latency 1
+      miss_latency 4
+      writeback_latency 5
+    }
+  }
+  topology { cpus 1 }
+}
+
+{
+  i0: nop
+  i1: nop
+  m : ldd r1, [r0 + 0]
+  x : nop
+}
+
+{
+  i0: nop
+  i1: nop
+  m : nop
+  x : nop
+}
+
+{
+  i0: add r2, r1, r0
+  i1: nop
+  m : nop
+  x : ret
+}
+"#;
+    let program = parse_program(source).unwrap();
+    let diags = verify_program(&program.layout, &program.bundles, &LatencyTable::default());
+
+    assert!(has_rule(&diags, Rule::GprReadyCycle), "{diags:?}");
+    assert!(
+        diags.iter().any(|diag| diag.message.contains("not ready until cycle 10")),
+        "{diags:?}"
+    );
+}
+
+#[test]
 fn detects_timing_violation_via_call_link_register_write() {
     let mut b0 = nop_bundle();
     b0.set_slot(3, call(1));
@@ -644,6 +709,8 @@ fn backend_legal_fixtures_are_clean() {
     assert_clean_fixture::<4>("examples/fixtures/legal/w4_composed_slot.lwir");
     assert_clean_fixture::<4>("examples/fixtures/legal/w4_fp_unit.lwir");
     assert_clean_fixture::<4>("examples/fixtures/legal/w4_aes_unit.lwir");
+    assert_clean_fixture::<4>("examples/fixtures/legal/w4_cache_hit_streak.lwir");
+    assert_clean_fixture::<4>("examples/fixtures/legal/w4_cache_dirty_eviction.lwir");
     assert_clean_fixture::<8>("examples/fixtures/legal/w8_pred_mem_latency.lwir");
     assert_clean_fixture::<16>("examples/fixtures/legal/w16_call_mem_latency.lwir");
 }

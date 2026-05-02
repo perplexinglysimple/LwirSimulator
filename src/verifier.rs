@@ -202,6 +202,7 @@ fn check_gpr_timing(
 }
 
 fn update_ready_at(
+    layout: &ProcessorLayout,
     bundle: &Bundle,
     issue_cycle: u64,
     latencies: &LatencyTable,
@@ -211,7 +212,11 @@ fn update_ready_at(
     for syl in &bundle.syllables {
         if let Some(dst) = gpr_write_dst(syl.opcode, syl.dst) {
             if dst > 0 && dst < ready_at.len() {
-                let lat = latencies.get(syl.opcode) as u64;
+                let lat = if is_load_opcode_for_timing(syl.opcode) {
+                    layout.cache.worst_case_load_latency()
+                } else {
+                    latencies.get(syl.opcode)
+                } as u64;
                 let new_ready = write_cycle + lat;
                 if new_ready > ready_at[dst] {
                     ready_at[dst] = new_ready;
@@ -219,6 +224,10 @@ fn update_ready_at(
             }
         }
     }
+}
+
+fn is_load_opcode_for_timing(op: Opcode) -> bool {
+    matches!(op, Opcode::LoadB | Opcode::LoadH | Opcode::LoadW | Opcode::LoadD)
 }
 
 fn gpr_write_dst(op: Opcode, dst: Option<usize>) -> Option<usize> {
@@ -470,7 +479,7 @@ pub fn verify_program(
         check_gpr_hazards(layout, bidx, bundle, &mut diags);
         check_pred_hazards(layout, bidx, bundle, &mut diags);
         check_gpr_timing(layout, bidx, bundle, issue_cycle, &ready_at, &mut diags);
-        update_ready_at(bundle, issue_cycle, latencies, &mut ready_at);
+        update_ready_at(layout, bundle, issue_cycle, latencies, &mut ready_at);
     }
 
     diags

@@ -1,5 +1,6 @@
 /// LWIR VLIW processor state and execution engine.
 use crate::bundle::Bundle;
+use crate::cache::{CacheOutcome, CacheState};
 use crate::isa::{Opcode, Syllable};
 use crate::latency::LatencyTable;
 use crate::layout::ProcessorLayout;

@@ -23,6 +23,7 @@ pub struct CpuState {
     pub cycle:      u64,
     pub scoreboard: Vec<ScoreboardEntry>,
     pub memory:     Vec<u8>,
+    pub cache:      CacheState,
     pub halted:     bool,
     pub latencies:  LatencyTable,
 }

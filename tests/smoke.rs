@@ -641,6 +641,137 @@ worker:
 }
 
 #[test]
+fn direct_mapped_cache_reports_load_hit_streak() {
+    let source = r#"
+.processor {
+  width 4
+
+  hardware {
+    unit alu = integer_alu
+    unit mem = memory
+    unit ctrl = control
+    unit mul = multiplier
+  }
+
+  layout slots {
+    0 = { alu }
+    1 = { alu }
+    2 = { mem }
+    3 = { ctrl, mul }
+  }
+
+  cache {
+    l1d {
+      line_bytes 64
+      capacity 64
+      associativity 1
+      write_policy write_back
+      hit_latency 1
+      miss_latency 4
+      writeback_latency 5
+    }
+  }
+  topology { cpus 1 }
+}
+
+{
+  i0: nop
+  i1: nop
+  m : ldd r1, [r0 + 0]
+  x : nop
+}
+
+{
+  i0: nop
+  i1: nop
+  m : nop
+  x : nop
+}
+
+{
+  i0: nop
+  i1: nop
+  m : ldd r2, [r0 + 8]
+  x : ret
+}
+"#;
+
+    let program = parse_program(source).expect("cache program should parse");
+    let mut cpu = CpuState::new_for_layout(&program.layout, LatencyTable::default());
+    let trace = trace_program(&mut cpu, &program.layout, &program.bundles).to_string();
+
+    assert!(trace.contains("kind=load width=8 addr=0x00000000 value=0x0000000000000000 in_bounds=true cache=miss"), "{trace}");
+    assert!(trace.contains("kind=load width=8 addr=0x00000008 value=0x0000000000000000 in_bounds=true cache=hit"), "{trace}");
+    assert!(trace.contains("gpr slot=2 reg=r1 value=0x0000000000000000 ready=5"), "{trace}");
+    assert!(trace.contains("gpr slot=2 reg=r2 value=0x0000000000000000 ready=4"), "{trace}");
+}
+
+#[test]
+fn direct_mapped_cache_reports_dirty_eviction() {
+    let source = r#"
+.processor {
+  width 4
+
+  hardware {
+    unit alu = integer_alu
+    unit mem = memory
+    unit ctrl = control
+    unit mul = multiplier
+  }
+
+  layout slots {
+    0 = { alu }
+    1 = { alu }
+    2 = { mem }
+    3 = { ctrl, mul }
+  }
+
+  cache {
+    l1d {
+      line_bytes 64
+      capacity 64
+      associativity 1
+      write_policy write_back
+      hit_latency 1
+      miss_latency 4
+      writeback_latency 5
+    }
+  }
+  topology { cpus 1 }
+}
+
+{
+  i0: movi r1, 99
+  i1: nop
+  m : nop
+  x : nop
+}
+
+{
+  i0: nop
+  i1: nop
+  m : std [r0 + 0], r1
+  x : nop
+}
+
+{
+  i0: nop
+  i1: nop
+  m : ldd r2, [r0 + 64]
+  x : ret
+}
+"#;
+
+    let program = parse_program(source).expect("dirty eviction program should parse");
+    let mut cpu = CpuState::new_for_layout(&program.layout, LatencyTable::default());
+    let trace = trace_program(&mut cpu, &program.layout, &program.bundles).to_string();
+
+    assert!(trace.contains("kind=store width=8 addr=0x00000000 value=0x0000000000000063 in_bounds=true cache=miss"), "{trace}");
+    assert!(trace.contains("kind=load width=8 addr=0x00000040 value=0x0000000000000000 in_bounds=true cache=miss_dirty"), "{trace}");
+    assert!(trace.contains("gpr slot=2 reg=r2 value=0x0000000000000000 ready=12"), "{trace}");
+}
+
+#[test]
 fn main_binary_trace_mode_emits_stable_log() {
     let output = std::process::Command::new(env!("CARGO_BIN_EXE_lwir_simulator"))
         .arg("--trace")

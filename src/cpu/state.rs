@@ -32,13 +32,15 @@ impl CpuState {
             crate::bundle::is_valid_width(layout.width),
             crate::layout::arch_supported(layout),
     {
-        Self::new_configured(
+        let mut cpu = Self::new_configured(
             layout.width,
             layout.arch.gprs,
             layout.arch.preds,
             layout.arch.memory_bytes,
             latencies,
-        )
+        );
+        cpu.cache = CacheState::new(layout.cache);
+        cpu
     }
 
     /// Create a reset CPU with explicit architectural resource sizes.
@@ -111,7 +113,21 @@ impl CpuState {
             k += 1;
         }
 
-        CpuState { width, num_gprs, num_preds, mem_size, gprs, preds, pc: 0, cycle: 0, scoreboard, memory, halted: false, latencies }
+        CpuState {
+            width,
+            num_gprs,
+            num_preds,
+            mem_size,
+            gprs,
+            preds,
+            pc: 0,
+            cycle: 0,
+            scoreboard,
+            memory,
+            cache: CacheState::new(crate::cache::CacheConfig::default_l1d()),
+            halted: false,
+            latencies,
+        }
     }
 
     /// Read GPR at `idx`.

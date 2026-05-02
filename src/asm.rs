@@ -1,7 +1,8 @@
 use crate::bundle::Bundle;
+use crate::cache::CacheConfig;
 use crate::isa::{Opcode, Syllable};
 use crate::layout::{
-    default_arch_config, AesVariant, ArchConfig, CacheConfig, FpVariant, ProcessorLayout, SlotSpec,
+    default_arch_config, AesVariant, ArchConfig, FpVariant, ProcessorLayout, SlotSpec,
     TopologyConfig, UnitDecl, UnitKind,
 };
 use crate::program::Program;
@@ -115,6 +116,7 @@ fn parse_processor_block(lines: &[(usize, String)]) -> Result<ProcessorLayout, S
     let mut width = None::<usize>;
     let mut units = Vec::<UnitDecl>::new();
     let mut slots = Vec::<Option<SlotSpec>>::new();
+    let mut cache = CacheConfig::default_l1d();
     let mut saw_cache = false;
     let mut saw_topology = false;
     let mut topology_cpus = None::<usize>;
@@ -143,6 +145,7 @@ fn parse_processor_block(lines: &[(usize, String)]) -> Result<ProcessorLayout, S
         if line.starts_with("cache") {
             saw_cache = true;
             section = "cache";
+            parse_cache_fields(line, &mut cache)?;
             continue;
         }
         if line.starts_with("arch") {
@@ -202,7 +205,9 @@ fn parse_processor_block(lines: &[(usize, String)]) -> Result<ProcessorLayout, S
             "arch" => {
                 parse_arch_fields(line, &mut arch)?;
             }
-            "cache" => {}
+            "cache" => {
+                parse_cache_fields(line, &mut cache)?;
+            }
             _ => {
                 return Err(format!(
                     "line {line_no}: unexpected processor layout directive `{line}`"
@@ -224,13 +229,16 @@ fn parse_processor_block(lines: &[(usize, String)]) -> Result<ProcessorLayout, S
         units,
         slots: final_slots,
         arch,
-        cache: CacheConfig {},
+        cache,
         topology: TopologyConfig {
             cpus: topology_cpus.unwrap_or(1),
         },
     };
     if !saw_cache {
         return Err("processor block missing stage-0 `cache { }` placeholder".to_string());
+    }
+    if !layout.cache.validate() {
+        return Err("invalid direct-mapped L1D cache configuration".to_string());
     }
     if !saw_topology {
         return Err(
@@ -400,6 +408,59 @@ fn parse_arch_fields(line: &str, arch: &mut ArchConfig) -> Result<(), String> {
             }
             "arch" => {
                 i += 1;
+            }
+            _ => {
+                i += 1;
+            }
+        }
+    }
+    Ok(())
+}
+
+fn parse_cache_fields(line: &str, cache: &mut CacheConfig) -> Result<(), String> {
+    let cleaned = line.replace('{', " ").replace('}', " ");
+    let parts = cleaned.split_whitespace().collect::<Vec<_>>();
+    let mut i = 0usize;
+    while i + 1 < parts.len() {
+        match parts[i] {
+            "line_bytes" => {
+                cache.line_bytes = parts[i + 1]
+                    .parse::<usize>()
+                    .map_err(|_| format!("invalid L1D line byte count `{}`", parts[i + 1]))?;
+                i += 2;
+            }
+            "capacity" | "capacity_bytes" => {
+                cache.capacity_bytes = parts[i + 1]
+                    .parse::<usize>()
+                    .map_err(|_| format!("invalid L1D capacity `{}`", parts[i + 1]))?;
+                i += 2;
+            }
+            "associativity" => {
+                cache.associativity = parts[i + 1]
+                    .parse::<usize>()
+                    .map_err(|_| format!("invalid L1D associativity `{}`", parts[i + 1]))?;
+                i += 2;
+            }
+            "hit_latency" => {
+                cache.hit_latency = parts[i + 1]
+                    .parse::<u32>()
+                    .map_err(|_| format!("invalid L1D hit latency `{}`", parts[i + 1]))?;
+                i += 2;
+            }
+            "miss_latency" => {
+                cache.miss_latency = parts[i + 1]
+                    .parse::<u32>()
+                    .map_err(|_| format!("invalid L1D miss latency `{}`", parts[i + 1]))?;
+                i += 2;
+            }
+            "writeback_latency" => {
+                cache.writeback_latency = parts[i + 1]
+                    .parse::<u32>()
+                    .map_err(|_| format!("invalid L1D writeback latency `{}`", parts[i + 1]))?;
+                i += 2;
+            }
+            "cache" | "l1d" | "write_policy" => {
+                i += if parts[i] == "write_policy" { 2 } else { 1 };
             }
             _ => {
                 i += 1;
