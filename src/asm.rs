@@ -1,7 +1,7 @@
 use crate::bundle::Bundle;
 use crate::isa::{Opcode, Syllable};
 use crate::layout::{
-    program_layout_compatible_runtime, CacheConfig, ProcessorLayout, SlotSpec, TopologyConfig, UnitDecl, UnitKind,
+    CacheConfig, ProcessorLayout, SlotSpec, TopologyConfig, UnitDecl, UnitKind,
 };
 use crate::program::Program;
 use std::collections::HashMap;
@@ -35,8 +35,6 @@ pub fn parse_program(text: &str) -> Result<Program, String> {
             program[parsed.bundle_index].set_slot(slot, syllable);
         }
     }
-
-    let _layout_compatible = program_layout_compatible_runtime(&layout, &program);
 
     Ok(Program { layout, bundles: program })
 }
@@ -848,7 +846,7 @@ done:  x ret
         latencies.set(Opcode::Mul, 5);
         let mut cpu = CpuState::new(program.layout.width, latencies);
 
-        while cpu.step(&program.bundles) {}
+        while cpu.step(&program.layout, &program.bundles) {}
 
         assert!(cpu.halted);
         assert_eq!(cpu.read_gpr(3), 42);
@@ -900,7 +898,7 @@ start:
         let program = parse_program(&source).expect("program should parse");
         let mut cpu = CpuState::new(program.layout.width, LatencyTable::default());
 
-        while cpu.step(&program.bundles) {}
+        while cpu.step(&program.layout, &program.bundles) {}
 
         assert!(cpu.halted);
         assert_eq!(cpu.read_gpr(3), 30);

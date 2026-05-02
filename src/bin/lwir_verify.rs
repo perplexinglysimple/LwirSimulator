@@ -45,7 +45,7 @@ fn main() -> ExitCode {
     };
 
     let latencies = LatencyTable::default();
-    let diags = verify_program(&program.bundles, &latencies);
+    let diags = verify_program(&program.layout, &program.bundles, &latencies);
 
     println!("LWIR Verifier (W={})", program.layout.width);
     println!("Program : {path}");

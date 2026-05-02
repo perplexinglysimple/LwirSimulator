@@ -61,7 +61,7 @@ fn main() -> ExitCode {
     let mut cpu = CpuState::new(program.layout.width, latencies);
 
     if trace {
-        let trace = cpu.trace_program(&program.bundles);
+        let trace = cpu.trace_program(&program.layout, &program.bundles);
         print!("{trace}");
         return ExitCode::SUCCESS;
     }
@@ -70,7 +70,7 @@ fn main() -> ExitCode {
     println!("Program: {path}");
     println!("Bundles: {}", program.bundles.len());
 
-    while cpu.step(&program.bundles) {}
+    while cpu.step(&program.layout, &program.bundles) {}
     print_cpu_state(&cpu);
     ExitCode::SUCCESS
 }

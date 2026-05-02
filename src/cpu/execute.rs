@@ -545,7 +545,7 @@ impl CpuState {
     }
 
     /// Advance by one bundle.
-    pub fn step(&mut self, program: &Vec<Bundle>) -> (ret: bool)
+    pub fn step(&mut self, layout: &ProcessorLayout, program: &Vec<Bundle>) -> (ret: bool)
         requires
             old(self).wf(),
             old(self).cycle < u64::MAX,
@@ -558,7 +558,7 @@ impl CpuState {
             return false;
         }
         let bundle = &program[self.pc];
-        if !self.bundle_is_legal(bundle) {
+        if !self.bundle_is_legal(layout, bundle) {
             self.halted = true;
             return false;
         }

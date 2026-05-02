@@ -1,7 +1,8 @@
 use lwir_simulator::asm::parse_program;
 use lwir_simulator::bundle::Bundle;
 use lwir_simulator::cpu::CpuState;
-use lwir_simulator::isa::{Opcode, SlotClass, Syllable};
+use lwir_simulator::isa::{Opcode, Syllable};
+use lwir_simulator::layout::{canonical_layout, ProcessorLayout};
 use lwir_simulator::latency::LatencyTable;
 
 const W: usize = 4;
@@ -157,6 +158,15 @@ fn sparse_latency_table() -> LatencyTable {
     LatencyTable { entries: vec![] }
 }
 
+fn step(cpu: &mut CpuState, program: &Vec<Bundle>) -> bool {
+    let layout = canonical_layout(cpu.width);
+    cpu.step(&layout, program)
+}
+
+fn trace_program(cpu: &mut CpuState, layout: &ProcessorLayout, program: &[Bundle]) -> lwir_simulator::cpu::TraceLog {
+    cpu.trace_program(layout, program)
+}
+
 fn hello_world_program() -> Vec<Bundle> {
     let mut b0 = Bundle::nop_bundle(W);
     b0.set_slot(0, mov_imm(1, 6));
@@ -182,7 +192,7 @@ fn hello_world_program_completes_and_writes_result() {
     let program = hello_world_program();
     let mut cpu = CpuState::new(W, latencies);
 
-    while cpu.step(&program) {}
+    while step(&mut cpu, &program) {}
 
     assert!(cpu.halted);
     assert_eq!(cpu.pc, program.len());
@@ -213,7 +223,7 @@ fn illegal_bundle_wrong_slot_halts_before_execution() {
     bad.set_slot(0, ret());
     let program = vec![bad];
 
-    assert!(!cpu.step(&program));
+    assert!(!step(&mut cpu, &program));
     assert!(cpu.halted);
     assert_eq!(cpu.pc, 0);
     assert_eq!(cpu.cycle, 0);
@@ -235,7 +245,7 @@ fn illegal_same_bundle_raw_halts_before_execution() {
     });
     let program = vec![bad];
 
-    assert!(!cpu.step(&program));
+    assert!(!step(&mut cpu, &program));
     assert!(cpu.halted);
     assert_eq!(cpu.pc, 0);
     assert_eq!(cpu.cycle, 0);
@@ -263,30 +273,30 @@ fn scoreboard_stalls_until_producer_ready() {
 
     let program = vec![b0, b1, b2];
 
-    assert!(cpu.step(&program));
+    assert!(step(&mut cpu, &program));
     assert_eq!(cpu.pc, 1);
     assert_eq!(cpu.cycle, 1);
     assert_eq!(cpu.read_gpr(3), 42);
 
-    assert!(cpu.step(&program));
+    assert!(step(&mut cpu, &program));
     assert_eq!(cpu.pc, 1);
     assert_eq!(cpu.cycle, 2);
     let stored = u64::from_le_bytes(cpu.memory[0x100..0x108].try_into().unwrap());
     assert_eq!(stored, 0);
 
-    assert!(cpu.step(&program));
+    assert!(step(&mut cpu, &program));
     assert_eq!(cpu.pc, 1);
     assert_eq!(cpu.cycle, 3);
 
-    assert!(cpu.step(&program));
+    assert!(step(&mut cpu, &program));
     assert_eq!(cpu.pc, 1);
     assert_eq!(cpu.cycle, 4);
 
-    assert!(cpu.step(&program));
+    assert!(step(&mut cpu, &program));
     assert_eq!(cpu.pc, 1);
     assert_eq!(cpu.cycle, 5);
 
-    assert!(cpu.step(&program));
+    assert!(step(&mut cpu, &program));
     assert_eq!(cpu.pc, 2);
     assert_eq!(cpu.cycle, 6);
     let stored = u64::from_le_bytes(cpu.memory[0x100..0x108].try_into().unwrap());
@@ -354,7 +364,7 @@ fn shifts_and_load_widths_behave_as_expected() {
     b7.set_slot(3, ret());
 
     let program = vec![b0, b1, b2, b3, b4, b5, b6, b7];
-    while cpu.step(&program) {}
+    while step(&mut cpu, &program) {}
 
     assert_eq!(cpu.read_gpr(3), 64);
     assert_eq!(cpu.read_gpr(4), 0x0f00_0000_0000_0000);
@@ -389,7 +399,7 @@ fn predicate_logic_and_branch_control_skip_work() {
     b5.set_slot(3, ret());
 
     let program = vec![b0, b1, b2, b3, b4, b5];
-    while cpu.step(&program) {}
+    while step(&mut cpu, &program) {}
 
     assert!(cpu.read_pred(1));
     assert!(!cpu.read_pred(2));
@@ -415,7 +425,7 @@ fn call_and_return_follow_link_register() {
     let program = vec![b0, b1, b2];
 
     let mut steps = 0usize;
-    while cpu.step(&program) {
+    while step(&mut cpu, &program) {
         steps += 1;
         assert!(steps < 10, "call/return flow should terminate");
     }
@@ -530,7 +540,7 @@ worker:
     latencies.set(Opcode::Mul, 5);
     let mut cpu = CpuState::new(W, latencies);
 
-    let trace = cpu.trace_program(&program);
+    let trace = trace_program(&mut cpu, &program.layout, &program.bundles);
     let rendered = trace.to_string();
 
     assert!(cpu.halted);
@@ -794,7 +804,7 @@ fn opcode_matrix_covers_remaining_execution_paths() {
         b0, b1, b2, b3, b4, b5, b6, b7, b8, b9, b10, b11, b12, b13, b14, b15, b16, b17,
     ];
 
-    while cpu.step(&program) {}
+    while step(&mut cpu, &program) {}
 
     assert_eq!(cpu.read_gpr(1), 0x55);
     assert_eq!(cpu.read_gpr(2), 0x0f);
@@ -832,7 +842,7 @@ fn illegal_same_bundle_gpr_waw_halts_before_execution() {
     bad.set_slot(1, mov_imm(1, 7));
     let program = vec![bad];
 
-    assert!(!cpu.step(&program));
+    assert!(!step(&mut cpu, &program));
     assert!(cpu.halted);
     assert_eq!(cpu.pc, 0);
     assert_eq!(cpu.read_gpr(1), 0);
@@ -847,7 +857,7 @@ fn illegal_same_bundle_ret_dependency_halts_before_execution() {
     bad.set_slot(3, ret());
     let program = vec![bad];
 
-    assert!(!cpu.step(&program));
+    assert!(!step(&mut cpu, &program));
     assert!(cpu.halted);
     assert_eq!(cpu.pc, 0);
     assert_eq!(cpu.read_gpr(31), 0);
@@ -863,7 +873,7 @@ fn illegal_same_bundle_call_ret_dependency_halts_wide_bundle() {
     bad.set_slot(7, ret());
     let program = vec![bad];
 
-    assert!(!cpu.step(&program));
+    assert!(!step(&mut cpu, &program));
     assert!(cpu.halted);
     assert_eq!(cpu.pc, 0);
     assert_eq!(cpu.cycle, 0);
@@ -880,7 +890,7 @@ fn illegal_same_bundle_predicate_raw_halts_before_execution() {
     bad.set_slot(3, branch(1, false, 0));
     let program = vec![bad];
 
-    assert!(!cpu.step(&program));
+    assert!(!step(&mut cpu, &program));
     assert!(cpu.halted);
     assert_eq!(cpu.pc, 0);
 }
@@ -894,7 +904,7 @@ fn illegal_same_bundle_predicate_waw_halts_before_execution() {
     bad.set_slot(3, p_not(1, 0));
     let program = vec![bad];
 
-    assert!(!cpu.step(&program));
+    assert!(!step(&mut cpu, &program));
     assert!(cpu.halted);
     assert_eq!(cpu.pc, 0);
 }
@@ -914,26 +924,26 @@ fn ret_stalls_until_link_register_ready() {
 
     let program = vec![b0, b1];
 
-    assert!(cpu.step(&program));
+    assert!(step(&mut cpu, &program));
     assert_eq!(cpu.pc, 1);
     assert_eq!(cpu.cycle, 1);
     assert_eq!(cpu.read_gpr(31), 3);
 
-    assert!(cpu.step(&program));
+    assert!(step(&mut cpu, &program));
     assert_eq!(cpu.pc, 1);
     assert_eq!(cpu.cycle, 2);
 
-    assert!(cpu.step(&program));
+    assert!(step(&mut cpu, &program));
     assert_eq!(cpu.pc, 1);
     assert_eq!(cpu.cycle, 3);
 
     assert!(!cpu.halted);
-    assert!(cpu.step(&program));
+    assert!(step(&mut cpu, &program));
     assert_eq!(cpu.pc, 3);
     assert_eq!(cpu.cycle, 4);
     assert!(!cpu.halted);
 
-    assert!(!cpu.step(&program));
+    assert!(!step(&mut cpu, &program));
     assert_eq!(cpu.pc, 3);
     assert!(!cpu.halted);
 }
@@ -953,20 +963,20 @@ fn ret_stalls_until_call_link_register_ready() {
 
     let program = vec![b0, b1];
 
-    assert!(cpu.step(&program));
+    assert!(step(&mut cpu, &program));
     assert_eq!(cpu.pc, 1);
     assert_eq!(cpu.cycle, 1);
     assert_eq!(cpu.read_gpr(31), 1);
 
-    assert!(cpu.step(&program));
+    assert!(step(&mut cpu, &program));
     assert_eq!(cpu.pc, 1);
     assert_eq!(cpu.cycle, 2);
 
-    assert!(cpu.step(&program));
+    assert!(step(&mut cpu, &program));
     assert_eq!(cpu.pc, 1);
     assert_eq!(cpu.cycle, 3);
 
-    assert!(cpu.step(&program));
+    assert!(step(&mut cpu, &program));
     assert_eq!(cpu.pc, 1);
     assert_eq!(cpu.cycle, 4);
 }
@@ -988,7 +998,7 @@ fn out_of_bounds_loads_return_zero() {
     b3.set_slot(3, ret());
 
     let program = vec![b0, b1, b2, b3];
-    while cpu.step(&program) {}
+    while step(&mut cpu, &program) {}
 
     assert_eq!(cpu.read_gpr(1), 0);
     assert_eq!(cpu.read_gpr(2), 0);
@@ -1023,15 +1033,18 @@ fn predicate_ops_with_none_sources_use_false_default() {
     b2.set_slot(3, ret());
 
     let program = vec![b0, b1, b2];
-    while cpu.step(&program) {}
+    while step(&mut cpu, &program) {}
 
     assert!(cpu.read_pred(1));
     assert!(!cpu.read_pred(2));
 }
 
 #[test]
-fn opcode_nop_slot_class_is_integer() {
-    assert_eq!(Opcode::Nop.slot_class(), SlotClass::Integer);
+fn canonical_layout_allows_nop_in_any_slot() {
+    let layout = canonical_layout(W);
+    for slot in 0..W {
+        assert!(layout.slot_can_execute(slot, Opcode::Nop));
+    }
 }
 
 #[test]

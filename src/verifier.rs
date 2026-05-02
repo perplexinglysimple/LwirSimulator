@@ -10,7 +10,8 @@
 /// syllables that are both active in a given CPU state.
 use crate::bundle::Bundle;
 use crate::cpu::{CpuState, NUM_GPRS, NUM_PREDS};
-use crate::isa::{Opcode, SlotClass};
+use crate::isa::Opcode;
+use crate::layout::ProcessorLayout;
 use crate::latency::LatencyTable;
 use builtin::*;
 use builtin_macros::*;
@@ -21,6 +22,7 @@ use vstd::prelude::*;
 // ---------------------------------------------------------------------------
 
 fn check_slot_legality(
+    layout: &ProcessorLayout,
     bidx: usize,
     bundle: &Bundle,
     diags: &mut Vec<Diagnostic>,
@@ -29,19 +31,15 @@ fn check_slot_legality(
         if syl.opcode == Opcode::Nop {
             continue;
         }
-        let expected = slot_class_for_index(slot);
-        let actual = syl.opcode.slot_class();
-        if actual != expected {
+        if !layout.slot_can_execute(slot, syl.opcode) {
             diags.push(Diagnostic {
                 bundle_idx: bidx,
                 slot,
                 rule: Rule::SlotOpcodeLegality,
                 message: format!(
                     "bundle {bidx} slot {slot}: \
-                     `{}` is a {} op but slot {slot} is a {} slot",
+                     `{}` is not executable by the units declared for slot {slot}",
                     opcode_name(syl.opcode),
-                    slot_class_name(actual),
-                    slot_class_name(expected),
                 ),
             });
         }
@@ -216,14 +214,6 @@ fn update_ready_at(
     }
 }
 
-fn slot_class_for_index(slot: usize) -> SlotClass {
-    match slot % 4 {
-        0 | 1 => SlotClass::Integer,
-        2 => SlotClass::Memory,
-        _ => SlotClass::Control,
-    }
-}
-
 fn gpr_write_dst(op: Opcode, dst: Option<usize>) -> Option<usize> {
     if op == Opcode::Call {
         Some(31)
@@ -273,14 +263,6 @@ fn opcode_name(op: Opcode) -> &'static str {
     }
 }
 
-fn slot_class_name(sc: SlotClass) -> &'static str {
-    match sc {
-        SlotClass::Integer => "Integer",
-        SlotClass::Memory => "Memory",
-        SlotClass::Control => "Control",
-    }
-}
-
 // ---------------------------------------------------------------------------
 // Verus: spec functions and soundness proofs
 // ---------------------------------------------------------------------------
@@ -324,17 +306,15 @@ pub struct Diagnostic {
 // Each predicate is factored into a per-slot/per-pair helper so that the
 // forall bodies have a single function-call term to use as a Verus trigger.
 
-pub open spec fn spec_slot_ok_in(bundle: &Bundle, slot: int) -> bool {
-    bundle.syllables[slot].opcode == Opcode::Nop ||
-    crate::isa::spec_slot_class(bundle.syllables[slot].opcode)
-        == crate::cpu::spec_slot_class_for_index(slot)
+pub open spec fn spec_slot_ok_in(layout: &ProcessorLayout, bundle: &Bundle, slot: int) -> bool {
+    crate::layout::layout_slot_accepts_opcode(layout, slot, bundle.syllables[slot].opcode)
 }
 
 /// A bundle has no slot-opcode legality violations under the conservative contract
 /// (all syllables treated as unconditionally active).
-pub open spec fn spec_bundle_slot_ok(bundle: &Bundle) -> bool {
+pub open spec fn spec_bundle_slot_ok(layout: &ProcessorLayout, bundle: &Bundle) -> bool {
     forall|slot: int| 0 <= slot < bundle.syllables.len() ==>
-        #[trigger] spec_slot_ok_in(bundle, slot)
+        #[trigger] spec_slot_ok_in(layout, bundle, slot)
 }
 
 pub open spec fn spec_gpr_pair_ok_in(bundle: &Bundle, i: int, j: int) -> bool {
@@ -391,6 +371,7 @@ pub open spec fn spec_bundle_pred_hazard_free(bundle: &Bundle) -> bool {
 
 /// Slot-legality conservatism: unconditional slot-ok implies active-slot-ok.
 pub proof fn lemma_slot_ok_implies_active_slot_legal(
+    layout: &ProcessorLayout,
     bundle: &Bundle,
     cpu: &CpuState,
     slot: int,
@@ -399,11 +380,11 @@ pub proof fn lemma_slot_ok_implies_active_slot_legal(
         cpu.wf(),
         0 <= slot < bundle.syllables.len(),
         crate::cpu::spec_syl_active(cpu, &bundle.syllables[slot]),
-        spec_bundle_slot_ok(bundle),
+        spec_bundle_slot_ok(layout, bundle),
     ensures
-        spec_slot_ok_in(bundle, slot),
+        spec_slot_ok_in(layout, bundle, slot),
 {
-    assert(spec_slot_ok_in(bundle, slot));
+    assert(spec_slot_ok_in(layout, bundle, slot));
 }
 
 /// GPR-hazard conservatism: unconditional hazard-free implies active-pair hazard-free.
@@ -455,12 +436,13 @@ pub proof fn lemma_pred_hazard_free_implies_active_pair_ok(
 /// spec predicates whose soundness is proved by the lemmas above.
 #[verifier::external_body]
 pub fn verify_program(
+    layout: &ProcessorLayout,
     program: &[Bundle],
     latencies: &LatencyTable,
 ) -> (ret: Vec<Diagnostic>)
     ensures
         ret.len() == 0 ==> forall|k: int| 0 <= k < program.len() ==>
-            #[trigger] spec_bundle_slot_ok(&program[k]) &&
+            #[trigger] spec_bundle_slot_ok(layout, &program[k]) &&
             spec_bundle_gpr_hazard_free(&program[k]) &&
             spec_bundle_pred_hazard_free(&program[k]),
 {
@@ -469,7 +451,7 @@ pub fn verify_program(
 
     for (bidx, bundle) in program.iter().enumerate() {
         let issue_cycle = bidx as u64;
-        check_slot_legality(bidx, bundle, &mut diags);
+        check_slot_legality(layout, bidx, bundle, &mut diags);
         check_gpr_hazards(bidx, bundle, &mut diags);
         check_pred_hazards(bidx, bundle, &mut diags);
         check_gpr_timing(bidx, bundle, issue_cycle, &ready_at, &mut diags);

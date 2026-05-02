@@ -1,23 +1,12 @@
 /// Instruction Set Architecture for the LWIR VLIW processor.
 ///
 /// Bundle width is declared by the runtime processor layout in [4, 8, 16, 32, 64, 128, 256].
-/// Slots cycle through slot classes: I (integer), M (memory), X (control/mul).
+/// Slot legality is declared by the runtime processor layout.
 use builtin::*;
 use builtin_macros::*;
 use vstd::prelude::*;
 
 verus! {
-
-/// Slot class determines which functional unit executes an operation.
-#[derive(Clone, Copy, PartialEq, Eq, Debug)]
-pub enum SlotClass {
-    /// Integer ALU slot for arithmetic, logic, moves, and integer compares.
-    Integer,
-    /// Memory/address slot for loads, stores, address formation, and cache hints.
-    Memory,
-    /// Control/multiply slot for control flow, predicate logic, and long-latency multiply work.
-    Control,
-}
 
 /// An opcode for the LWIR ISA.
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
@@ -94,48 +83,6 @@ pub enum Opcode {
     // Universal
     /// Do nothing.
     Nop,
-}
-
-/// Spec: maps each opcode to its slot class.
-pub open spec fn spec_slot_class(op: Opcode) -> SlotClass {
-    match op {
-        Opcode::Add | Opcode::Sub | Opcode::And | Opcode::Or | Opcode::Xor
-        | Opcode::Shl | Opcode::Srl | Opcode::Sra | Opcode::Mov | Opcode::MovImm
-        | Opcode::CmpEq | Opcode::CmpLt | Opcode::CmpUlt | Opcode::Nop
-            => SlotClass::Integer,
-        Opcode::LoadB | Opcode::LoadH | Opcode::LoadW | Opcode::LoadD
-        | Opcode::StoreB | Opcode::StoreH | Opcode::StoreW | Opcode::StoreD
-        | Opcode::Lea | Opcode::Prefetch
-            => SlotClass::Memory,
-        Opcode::Mul | Opcode::MulH | Opcode::Branch | Opcode::Jump
-        | Opcode::Call | Opcode::Ret | Opcode::PAnd | Opcode::POr
-        | Opcode::PXor | Opcode::PNot
-            => SlotClass::Control,
-    }
-}
-
-impl Opcode {
-    /// Default slot class for this opcode.
-    /// Postcondition: result exactly matches the spec for every opcode.
-    pub fn slot_class(self) -> (ret: SlotClass)
-        ensures ret == spec_slot_class(self),
-    {
-        match self {
-            Opcode::Add | Opcode::Sub | Opcode::And | Opcode::Or | Opcode::Xor
-            | Opcode::Shl | Opcode::Srl | Opcode::Sra | Opcode::Mov | Opcode::MovImm
-            | Opcode::CmpEq | Opcode::CmpLt | Opcode::CmpUlt => SlotClass::Integer,
-
-            Opcode::LoadB | Opcode::LoadH | Opcode::LoadW | Opcode::LoadD
-            | Opcode::StoreB | Opcode::StoreH | Opcode::StoreW | Opcode::StoreD
-            | Opcode::Lea | Opcode::Prefetch => SlotClass::Memory,
-
-            Opcode::Mul | Opcode::MulH | Opcode::Branch | Opcode::Jump
-            | Opcode::Call | Opcode::Ret | Opcode::PAnd | Opcode::POr
-            | Opcode::PXor | Opcode::PNot => SlotClass::Control,
-
-            Opcode::Nop => SlotClass::Integer,
-        }
-    }
 }
 
 /// A single syllable (one slot's worth of instruction) in a bundle.

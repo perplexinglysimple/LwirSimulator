@@ -9,7 +9,7 @@ impl CpuState {
     ///
     /// Invalid bundles are rejected before execution so compiler bugs are not
     /// silently accepted by the simulator.
-    fn bundle_is_legal(&self, bundle: &Bundle) -> (ret: bool)
+    fn bundle_is_legal(&self, layout: &ProcessorLayout, bundle: &Bundle) -> (ret: bool)
         requires self.wf(),
     {
         let mut slot = 0usize;
@@ -21,7 +21,7 @@ impl CpuState {
         {
             let syl = &bundle.syllables[slot];
             let active = self.syl_is_active_runtime(syl);
-            if active && syl.opcode != Opcode::Nop && syl.opcode.slot_class() != Self::slot_class_for_index(slot) {
+            if active && !layout.slot_can_execute(slot, syl.opcode) {
                 return false;
             }
 

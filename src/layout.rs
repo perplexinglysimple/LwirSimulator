@@ -206,10 +206,14 @@ pub fn unit_kind_executes_runtime(kind: UnitKind, opcode: Opcode) -> (ret: bool)
             | Opcode::Lea | Opcode::Prefetch => true,
             _ => false,
         },
-        UnitKind::Control | UnitKind::Multiplier => match opcode {
-            Opcode::Mul | Opcode::MulH | Opcode::Branch | Opcode::Jump
-            | Opcode::Call | Opcode::Ret | Opcode::PAnd | Opcode::POr
+        UnitKind::Control => match opcode {
+            Opcode::Branch | Opcode::Jump | Opcode::Call | Opcode::Ret
+            | Opcode::PAnd | Opcode::POr
             | Opcode::PXor | Opcode::PNot => true,
+            _ => false,
+        },
+        UnitKind::Multiplier => match opcode {
+            Opcode::Mul | Opcode::MulH => true,
             _ => false,
         },
         UnitKind::Fp(_) | UnitKind::Aes(_) => false,
@@ -253,10 +257,14 @@ pub open spec fn unit_kind_executes(kind: UnitKind, opcode: Opcode) -> bool {
             | Opcode::Lea | Opcode::Prefetch => true,
             _ => false,
         },
-        UnitKind::Control | UnitKind::Multiplier => match opcode {
-            Opcode::Mul | Opcode::MulH | Opcode::Branch | Opcode::Jump
-            | Opcode::Call | Opcode::Ret | Opcode::PAnd | Opcode::POr
+        UnitKind::Control => match opcode {
+            Opcode::Branch | Opcode::Jump | Opcode::Call | Opcode::Ret
+            | Opcode::PAnd | Opcode::POr
             | Opcode::PXor | Opcode::PNot => true,
+            _ => false,
+        },
+        UnitKind::Multiplier => match opcode {
+            Opcode::Mul | Opcode::MulH => true,
             _ => false,
         },
         UnitKind::Fp(_) | UnitKind::Aes(_) => false,
@@ -271,6 +279,93 @@ pub open spec fn layout_slot_accepts_opcode(layout: &ProcessorLayout, slot: int,
         0 <= k < layout.units.len() &&
         layout.slots[slot].units[j]@ == layout.units[k].name@ &&
         unit_kind_executes(layout.units[k].kind, opcode)
+}
+
+pub open spec fn canonical_slot_accepts_legacy_units(slot: int, opcode: Opcode) -> bool {
+    opcode == Opcode::Nop ||
+    if slot % 4 == 0 || slot % 4 == 1 {
+        unit_kind_executes(UnitKind::IntegerAlu, opcode)
+    } else if slot % 4 == 2 {
+        unit_kind_executes(UnitKind::Memory, opcode)
+    } else {
+        unit_kind_executes(UnitKind::Control, opcode) ||
+        unit_kind_executes(UnitKind::Multiplier, opcode)
+    }
+}
+
+pub open spec fn legacy_slot_accepts_opcode(slot: int, opcode: Opcode) -> bool {
+    opcode == Opcode::Nop ||
+    if slot % 4 == 0 || slot % 4 == 1 {
+        match opcode {
+            Opcode::Add | Opcode::Sub | Opcode::And | Opcode::Or | Opcode::Xor
+            | Opcode::Shl | Opcode::Srl | Opcode::Sra | Opcode::Mov | Opcode::MovImm
+            | Opcode::CmpEq | Opcode::CmpLt | Opcode::CmpUlt => true,
+            _ => false,
+        }
+    } else if slot % 4 == 2 {
+        match opcode {
+            Opcode::LoadB | Opcode::LoadH | Opcode::LoadW | Opcode::LoadD
+            | Opcode::StoreB | Opcode::StoreH | Opcode::StoreW | Opcode::StoreD
+            | Opcode::Lea | Opcode::Prefetch => true,
+            _ => false,
+        }
+    } else {
+        match opcode {
+            Opcode::Mul | Opcode::MulH | Opcode::Branch | Opcode::Jump
+            | Opcode::Call | Opcode::Ret | Opcode::PAnd | Opcode::POr
+            | Opcode::PXor | Opcode::PNot => true,
+            _ => false,
+        }
+    }
+}
+
+pub proof fn lemma_canonical_layout_matches_legacy_slot_class()
+    ensures
+        forall|slot: int, opcode: Opcode| 0 <= slot ==>
+            canonical_slot_accepts_legacy_units(slot, opcode) ==
+            legacy_slot_accepts_opcode(slot, opcode),
+{
+    assert forall|slot: int, opcode: Opcode| 0 <= slot implies
+        canonical_slot_accepts_legacy_units(slot, opcode) ==
+        legacy_slot_accepts_opcode(slot, opcode)
+    by {
+        match opcode {
+            Opcode::Add => {}
+            Opcode::Sub => {}
+            Opcode::And => {}
+            Opcode::Or => {}
+            Opcode::Xor => {}
+            Opcode::Shl => {}
+            Opcode::Srl => {}
+            Opcode::Sra => {}
+            Opcode::Mov => {}
+            Opcode::MovImm => {}
+            Opcode::CmpEq => {}
+            Opcode::CmpLt => {}
+            Opcode::CmpUlt => {}
+            Opcode::LoadB => {}
+            Opcode::LoadH => {}
+            Opcode::LoadW => {}
+            Opcode::LoadD => {}
+            Opcode::StoreB => {}
+            Opcode::StoreH => {}
+            Opcode::StoreW => {}
+            Opcode::StoreD => {}
+            Opcode::Lea => {}
+            Opcode::Prefetch => {}
+            Opcode::Mul => {}
+            Opcode::MulH => {}
+            Opcode::Branch => {}
+            Opcode::Jump => {}
+            Opcode::Call => {}
+            Opcode::Ret => {}
+            Opcode::PAnd => {}
+            Opcode::POr => {}
+            Opcode::PXor => {}
+            Opcode::PNot => {}
+            Opcode::Nop => {}
+        }
+    }
 }
 
 pub open spec fn program_layout_compatible(layout: &ProcessorLayout, bundles: &Vec<Bundle>) -> bool {

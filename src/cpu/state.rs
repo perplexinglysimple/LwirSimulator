@@ -166,18 +166,6 @@ impl CpuState {
         }
     }
 
-    /// Expected slot class for a slot index in a bundle.
-    fn slot_class_for_index(slot: usize) -> (ret: SlotClass)
-        ensures
-            ret == spec_slot_class_for_index(slot as int),
-    {
-        match slot % 4 {
-            0 | 1 => SlotClass::Integer,
-            2 => SlotClass::Memory,
-            _ => SlotClass::Control,
-        }
-    }
-
     fn opcode_writes_pred(op: Opcode) -> (ret: bool)
         ensures ret == spec_opcode_writes_pred(op),
     {

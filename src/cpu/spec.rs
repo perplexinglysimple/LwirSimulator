@@ -53,13 +53,6 @@ pub open spec fn spec_addr(cpu: &CpuState, syl: &Syllable) -> usize {
     (spec_src(cpu, syl.src[0]).wrapping_add(syl.imm as u64)) as usize
 }
 
-/// Spec: expected slot class for a given slot index (repeats I, I, M, X every 4).
-pub open spec fn spec_slot_class_for_index(slot: int) -> SlotClass {
-    if slot % 4 == 0 || slot % 4 == 1 { SlotClass::Integer }
-    else if slot % 4 == 2 { SlotClass::Memory }
-    else { SlotClass::Control }
-}
-
 /// Spec: GPR destination written by (opcode, dst), including `call`'s implicit r31 write.
 pub open spec fn spec_gpr_write_dst(op: Opcode, dst: Option<usize>) -> Option<usize> {
     if op == Opcode::Call { Some(31usize) }

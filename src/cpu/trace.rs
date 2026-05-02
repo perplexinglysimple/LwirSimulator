@@ -114,9 +114,9 @@ pub enum TraceControlFlow {
 
 impl CpuState {
     /// Run until the program halts or PC leaves the program, returning a stable trace.
-    pub fn trace_program(&mut self, program: &[Bundle]) -> TraceLog {
+    pub fn trace_program(&mut self, layout: &ProcessorLayout, program: &[Bundle]) -> TraceLog {
         let mut events = Vec::new();
-        while let Some(event) = self.step_trace(program) {
+        while let Some(event) = self.step_trace(layout, program) {
             events.push(event);
         }
 
@@ -130,7 +130,7 @@ impl CpuState {
     }
 
     /// Execute one traced bundle attempt. Returns `None` when no bundle can issue.
-    pub fn step_trace(&mut self, program: &[Bundle]) -> Option<TraceEvent> {
+    pub fn step_trace(&mut self, layout: &ProcessorLayout, program: &[Bundle]) -> Option<TraceEvent> {
         if self.halted || self.pc >= program.len() {
             return None;
         }
@@ -139,7 +139,7 @@ impl CpuState {
         let cycle = self.cycle;
         let bundle = &program[self.pc];
 
-        if !self.bundle_is_legal(bundle) {
+        if !self.bundle_is_legal(layout, bundle) {
             self.halted = true;
             return Some(TraceEvent {
                 kind: TraceEventKind::IllegalBundle,
