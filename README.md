@@ -153,10 +153,10 @@ Expected output:
 ```
 VLIW Simulator (W=4)
 Program: examples/hello.vliw
-Bundles: 3
+Bundles: 5
 
 === VLIW Processor State (width=4) ===
-  PC: 3  Cycle: 7  Halted: true
+  PC: 5  Cycle: 5  Halted: true
   GPRs:
     r1  = 0x0000000000000006  (6)
     r2  = 0x0000000000000007  (7)
@@ -198,6 +198,7 @@ Current rules:
 - comments start with `#`
 - the first token of each syllable is the slot: `i0`, `i1`, `m`, `x`, or a
   numeric slot index
+- `layout slots` may declare explicit slot aliases with `alias <name> = <slot>`
 - branches use `branch pN, target` or `branch !pN, target`
 - non-branch instructions may use an optional guard prefix like `[p1]` or `[!p2]`
 - `movi` is accepted as an alias for `mov_imm`
@@ -218,6 +219,11 @@ Minimal example:
   }
 
   layout slots {
+    alias I0 = 0
+    alias I1 = 1
+    alias M = 2
+    alias X = 3
+
     0 = { alu }
     1 = { alu }
     2 = { mem }
@@ -228,44 +234,62 @@ Minimal example:
   topology { cpus 1 }
 }
 
-start: i0 mov_imm r1, 6 | i1 mov_imm r2, 7
-       x mul r3, r1, r2
-       m store_d r0, r3, 0x100
-       x ret
+start: I0 mov_imm r1, 6 | I1 mov_imm r2, 7
+       X mul r3, r1, r2
+       I0 nop
+       I0 nop
+       M store_d r0, r3, 0x100 | X ret
 ```
 
-Block-style is equivalent:
+The first bundle can also be written in block style:
 
 ```text
 start:
 {
-  I0: movi r1, 10
-  I1: movi r2, 20
+  I0: movi r1, 6
+  I1: movi r2, 7
   M : nop
   X : nop
 }
 ```
 
-Supported operand shapes:
-- `add/sub/and/or/xor/shl/srl/sra/mul/mulh dst, src0, src1`
-- `mov dst, src0`
-- `mov_imm dst, imm`
-- `cmpeq/cmplt/cmpult pdst, src0, src1`
-- `load_b/load_h/load_w/load_d dst, base, imm`
-- `store_b/store_h/store_w/store_d base, src, imm`
-- `acqload dst, base, imm` (acquire-ordered 8-byte load)
-- `relstore base, src, imm` (release-ordered 8-byte store)
-- `lea dst, base, imm`
-- `prefetch base, imm`
-- `branch pred, target`
-- `jump target`
-- `call target`
-- `ret`
-- `pand/por/pxor pdst, psrc0, psrc1`
-- `pnot pdst, psrc0`
-- `fpadd32/fpmul32/fpadd64/fpmul64 dst, src0, src1` (placeholder semantics)
-- `aesenc/aesdec dst, src0, src1` (placeholder semantics)
-- `nop`
+Here `I0`, `I1`, `M`, and `X` are slot aliases declared in the header. They map
+to numeric slot indices, not directly to hardware units: `I0` selects slot 0,
+`I1` selects slot 1, `M` selects slot 2, and `X` selects slot 3. The selected
+slot's declared unit set then determines whether the opcode is legal. For
+compatibility, the parser still has built-in aliases `i0 = 0`, `i1 = 1`,
+`m = 2`, and `x = 3`, but new examples should declare aliases explicitly when
+using symbolic slot names.
+
+Supported operand shapes, grouped by hardware unit kind:
+
+- `integer_alu`
+  - `add/sub/and/or/xor/shl/srl/sra dst, src0, src1`
+  - `mov dst, src0`
+  - `mov_imm dst, imm`
+  - `cmpeq/cmplt/cmpult pdst, src0, src1`
+- `memory`
+  - `load_b/load_h/load_w/load_d dst, base, imm`
+  - `store_b/store_h/store_w/store_d base, src, imm`
+  - `acqload dst, base, imm` (acquire-ordered 8-byte load)
+  - `relstore base, src, imm` (release-ordered 8-byte store)
+  - `lea dst, base, imm`
+  - `prefetch base, imm`
+- `control`
+  - `branch pred, target`
+  - `jump target`
+  - `call target`
+  - `ret`
+  - `pand/por/pxor pdst, psrc0, psrc1`
+  - `pnot pdst, psrc0`
+- `multiplier`
+  - `mul/mulh dst, src0, src1`
+- `fp { variant ... }`
+  - `fpadd32/fpmul32/fpadd64/fpmul64 dst, src0, src1` (placeholder semantics)
+- `aes { variant aes_ni }`
+  - `aesenc/aesdec dst, src0, src1` (placeholder semantics)
+- any slot
+  - `nop`
 
 ### Check a program with the static verifier
 
@@ -331,9 +355,11 @@ cargo test --all-targets
 ```
 
 GitHub Actions runs `cargo verus verify`, `cargo test --all-targets`, explicit
-`vliw_simulator --trace` runs over the legal golden fixtures, explicit
-`vliw_verify` runs over the legal and illegal golden fixtures, and coverage on
-every push to `main` / `master` and on pull requests.
+example checks through `scripts/check_examples.sh`, and coverage on every push
+to `main` / `master` and on pull requests. The example check verifies and
+simulates every top-level positive example and every single-CPU legal fixture,
+asserts expected verifier failures for illegal examples, and runs the multi-CPU
+coherence fixture pair through the Rust system tests.
 
 ### Measure code coverage
 

@@ -8,6 +8,8 @@ use crate::layout::{
 use crate::program::Program;
 use std::collections::HashMap;
 
+type SlotAliases = HashMap<String, usize>;
+
 #[derive(Clone, Debug)]
 struct ParsedBundleLine {
     bundle_index: usize,
@@ -19,12 +21,12 @@ const PROCESSOR_DOC_HINT: &str =
     "processor layout headers are mandatory; see docs/processor_layout_plan.md";
 
 pub fn parse_program(text: &str) -> Result<Program, String> {
-    let (layout, body_start) = parse_processor_header(text)?;
+    let (layout, slot_aliases, body_start) = parse_processor_header(text)?;
     if !layout.validate() {
         return Err("invalid processor layout; see docs/processor_layout_plan.md".to_string());
     }
     let body = text.lines().skip(body_start).collect::<Vec<_>>().join("\n");
-    let parsed_lines = collect_lines(&body)?;
+    let parsed_lines = collect_lines(&body, &slot_aliases)?;
     let mut program = vec![
         Bundle::nop_bundle(layout.width);
         parsed_lines
@@ -40,7 +42,8 @@ pub fn parse_program(text: &str) -> Result<Program, String> {
             if part.is_empty() {
                 continue;
             }
-            let (slot, syllable) = parse_instruction(part, parsed.line_no, layout.width)?;
+            let (slot, syllable) =
+                parse_instruction(part, parsed.line_no, layout.width, &slot_aliases)?;
             program[parsed.bundle_index].set_slot(slot, syllable);
         }
     }
@@ -51,7 +54,7 @@ pub fn parse_program(text: &str) -> Result<Program, String> {
     })
 }
 
-fn parse_processor_header(text: &str) -> Result<(ProcessorLayout, usize), String> {
+fn parse_processor_header(text: &str) -> Result<(ProcessorLayout, SlotAliases, usize), String> {
     let mut first_line = None::<(usize, String)>;
     for (idx, raw_line) in text.lines().enumerate() {
         let line = strip_comment(raw_line).trim().to_string();
@@ -101,8 +104,8 @@ fn parse_processor_header(text: &str) -> Result<(ProcessorLayout, usize), String
         }
         block_lines.push((line_no, line));
         if saw_open && depth == 0 {
-            let layout = parse_processor_block(&block_lines)?;
-            return Ok((layout, idx + 1));
+            let (layout, slot_aliases) = parse_processor_block(&block_lines)?;
+            return Ok((layout, slot_aliases, idx + 1));
         }
     }
 
@@ -112,10 +115,13 @@ fn parse_processor_header(text: &str) -> Result<(ProcessorLayout, usize), String
     ))
 }
 
-fn parse_processor_block(lines: &[(usize, String)]) -> Result<ProcessorLayout, String> {
+fn parse_processor_block(
+    lines: &[(usize, String)],
+) -> Result<(ProcessorLayout, SlotAliases), String> {
     let mut width = None::<usize>;
     let mut units = Vec::<UnitDecl>::new();
     let mut slots = Vec::<Option<SlotSpec>>::new();
+    let mut slot_aliases = SlotAliases::new();
     let mut cache = CacheConfig::default_l1d();
     let mut saw_cache = false;
     let mut saw_topology = false;
@@ -188,14 +194,22 @@ fn parse_processor_block(lines: &[(usize, String)]) -> Result<ProcessorLayout, S
                 units.push(decl);
             }
             "slots" => {
-                let (slot, spec) = parse_slot_spec(line, *line_no)?;
-                if slots.len() <= slot {
-                    slots.resize_with(slot + 1, || None);
+                if is_slot_alias_line(line) {
+                    let (name, slot) = parse_slot_alias(line, *line_no)?;
+                    let key = name.to_ascii_lowercase();
+                    if slot_aliases.insert(key, slot).is_some() {
+                        return Err(format!("line {line_no}: duplicate slot alias `{name}`"));
+                    }
+                } else {
+                    let (slot, spec) = parse_slot_spec(line, *line_no)?;
+                    if slots.len() <= slot {
+                        slots.resize_with(slot + 1, || None);
+                    }
+                    if slots[slot].is_some() {
+                        return Err(format!("line {line_no}: duplicate layout slot {slot}"));
+                    }
+                    slots[slot] = Some(spec);
                 }
-                if slots[slot].is_some() {
-                    return Err(format!("line {line_no}: duplicate layout slot {slot}"));
-                }
-                slots[slot] = Some(spec);
             }
             "topology" => {
                 if let Some(cpus) = parse_topology_cpus(line)? {
@@ -217,6 +231,13 @@ fn parse_processor_block(lines: &[(usize, String)]) -> Result<ProcessorLayout, S
     }
 
     let width = width.ok_or_else(|| "processor block missing `width`".to_string())?;
+    for (alias, slot) in &slot_aliases {
+        if *slot >= width {
+            return Err(format!(
+                "slot alias `{alias}` targets slot {slot}, out of range for width {width}"
+            ));
+        }
+    }
     let mut final_slots = Vec::new();
     for slot in 0..slots.len() {
         let Some(spec) = slots[slot].take() else {
@@ -243,7 +264,7 @@ fn parse_processor_block(lines: &[(usize, String)]) -> Result<ProcessorLayout, S
     if !saw_topology {
         return Err("processor block missing `topology { cpus N }` declaration".to_string());
     }
-    Ok(layout)
+    Ok((layout, slot_aliases))
 }
 
 fn parse_unit_decl(line: &str, line_no: usize) -> Result<UnitDecl, String> {
@@ -366,6 +387,38 @@ fn parse_slot_spec(line: &str, line_no: usize) -> Result<(usize, SlotSpec), Stri
     Ok((slot, SlotSpec { units }))
 }
 
+fn is_slot_alias_line(line: &str) -> bool {
+    line.trim_start()
+        .split_whitespace()
+        .next()
+        .is_some_and(|token| token == "alias")
+}
+
+fn parse_slot_alias(line: &str, line_no: usize) -> Result<(String, usize), String> {
+    let rest = line
+        .trim_start()
+        .strip_prefix("alias")
+        .ok_or_else(|| format!("line {line_no}: expected `alias <name> = <slot>`"))?
+        .trim();
+    let (name, slot) = rest
+        .split_once('=')
+        .ok_or_else(|| format!("line {line_no}: expected `alias <name> = <slot>`"))?;
+    let name = name.trim();
+    if !is_identifier(name) {
+        return Err(format!("line {line_no}: invalid slot alias `{name}`"));
+    }
+    if is_reserved_token(name) && parse_builtin_slot(name).is_none() {
+        return Err(format!(
+            "line {line_no}: slot alias `{name}` conflicts with a reserved token"
+        ));
+    }
+    let slot_text = slot.trim();
+    let slot = slot_text
+        .parse::<usize>()
+        .map_err(|_| format!("line {line_no}: invalid alias slot `{slot_text}`"))?;
+    Ok((name.to_string(), slot))
+}
+
 fn parse_topology_cpus(line: &str) -> Result<Option<usize>, String> {
     let cleaned = line.replace('{', " ").replace('}', " ");
     let parts = cleaned.split_whitespace().collect::<Vec<_>>();
@@ -468,7 +521,7 @@ fn parse_cache_fields(line: &str, cache: &mut CacheConfig) -> Result<(), String>
     Ok(())
 }
 
-fn collect_lines(text: &str) -> Result<Vec<ParsedBundleLine>, String> {
+fn collect_lines(text: &str, slot_aliases: &SlotAliases) -> Result<Vec<ParsedBundleLine>, String> {
     let mut labels = HashMap::<String, usize>::new();
     let mut parsed = Vec::<ParsedBundleLine>::new();
     let mut bundle_index = 0usize;
@@ -554,7 +607,12 @@ fn collect_lines(text: &str) -> Result<Vec<ParsedBundleLine>, String> {
     }
 
     for parsed_line in &mut parsed {
-        parsed_line.text = resolve_labels(&parsed_line.text, &labels, parsed_line.line_no)?;
+        parsed_line.text = resolve_labels(
+            &parsed_line.text,
+            &labels,
+            slot_aliases,
+            parsed_line.line_no,
+        )?;
     }
 
     Ok(parsed)
@@ -602,14 +660,16 @@ fn is_identifier(token: &str) -> bool {
 fn resolve_labels(
     line: &str,
     labels: &HashMap<String, usize>,
+    slot_aliases: &SlotAliases,
     line_no: usize,
 ) -> Result<String, String> {
-    Ok(replace_labels_in_line(line, labels, line_no)?)
+    Ok(replace_labels_in_line(line, labels, slot_aliases, line_no)?)
 }
 
 fn replace_labels_in_line(
     line: &str,
     labels: &HashMap<String, usize>,
+    slot_aliases: &SlotAliases,
     line_no: usize,
 ) -> Result<String, String> {
     let mut out = String::new();
@@ -617,7 +677,7 @@ fn replace_labels_in_line(
     for ch in line.chars() {
         if ch.is_whitespace() || ch == ',' || ch == '|' {
             if !token.is_empty() {
-                out.push_str(&resolve_token(&token, labels, line_no)?);
+                out.push_str(&resolve_token(&token, labels, slot_aliases, line_no)?);
                 token.clear();
             }
             out.push(ch);
@@ -626,7 +686,7 @@ fn replace_labels_in_line(
         }
     }
     if !token.is_empty() {
-        out.push_str(&resolve_token(&token, labels, line_no)?);
+        out.push_str(&resolve_token(&token, labels, slot_aliases, line_no)?);
     }
     Ok(out)
 }
@@ -634,9 +694,10 @@ fn replace_labels_in_line(
 fn resolve_token(
     token: &str,
     labels: &HashMap<String, usize>,
+    slot_aliases: &SlotAliases,
     line_no: usize,
 ) -> Result<String, String> {
-    if looks_like_label_ref(token) {
+    if looks_like_label_ref(token, slot_aliases) {
         match labels.get(token) {
             Some(target) => Ok(target.to_string()),
             None => Err(format!("line {line_no}: unknown label `{token}`")),
@@ -646,8 +707,9 @@ fn resolve_token(
     }
 }
 
-fn looks_like_label_ref(piece: &str) -> bool {
+fn looks_like_label_ref(piece: &str, slot_aliases: &SlotAliases) -> bool {
     is_identifier(piece)
+        && !slot_aliases.contains_key(&piece.to_ascii_lowercase())
         && !piece.starts_with('r')
         && !piece.starts_with('p')
         && !piece.starts_with('[')
@@ -749,6 +811,7 @@ fn parse_instruction(
     line: &str,
     line_no: usize,
     width: usize,
+    slot_aliases: &SlotAliases,
 ) -> Result<(usize, Syllable), String> {
     let normalized = normalize_instruction_text(line);
     let mut tokens: Vec<&str> = normalized.split_whitespace().collect();
@@ -756,7 +819,7 @@ fn parse_instruction(
         return Err(format!("line {line_no}: expected `<slot> <opcode> ...`"));
     }
 
-    let slot = parse_slot(tokens[0], line_no)?;
+    let slot = parse_slot(tokens[0], line_no, slot_aliases)?;
     if slot >= width {
         return Err(format!(
             "line {line_no}: slot {slot} out of range for width {width}"
@@ -858,7 +921,11 @@ fn parse_non_branch(opcode: Opcode, args: &[&str], line_no: usize) -> Result<Syl
                 Some(parse_gpr(args[2], line_no)?),
             ];
         }
-        Opcode::LoadB | Opcode::LoadH | Opcode::LoadW | Opcode::LoadD | Opcode::AcqLoad
+        Opcode::LoadB
+        | Opcode::LoadH
+        | Opcode::LoadW
+        | Opcode::LoadD
+        | Opcode::AcqLoad
         | Opcode::Lea => {
             let (dst, base, imm) = parse_load_like_operands(args, line_no, opcode)?;
             syllable.dst = Some(dst);
@@ -901,15 +968,26 @@ fn parse_non_branch(opcode: Opcode, args: &[&str], line_no: usize) -> Result<Syl
     Ok(syllable)
 }
 
-fn parse_slot(token: &str, line_no: usize) -> Result<usize, String> {
+fn parse_slot(token: &str, line_no: usize, slot_aliases: &SlotAliases) -> Result<usize, String> {
+    let key = token.to_ascii_lowercase();
+    if let Some(slot) = slot_aliases.get(&key) {
+        return Ok(*slot);
+    }
+    if let Some(slot) = parse_builtin_slot(token) {
+        return Ok(slot);
+    }
+    token
+        .parse::<usize>()
+        .map_err(|_| format!("line {line_no}: invalid slot `{token}`"))
+}
+
+fn parse_builtin_slot(token: &str) -> Option<usize> {
     match token.to_ascii_lowercase().as_str() {
-        "i0" => Ok(0),
-        "i1" => Ok(1),
-        "m" => Ok(2),
-        "x" => Ok(3),
-        _ => token
-            .parse::<usize>()
-            .map_err(|_| format!("line {line_no}: invalid slot `{token}`")),
+        "i0" => Some(0),
+        "i1" => Some(1),
+        "m" => Some(2),
+        "x" => Some(3),
+        _ => None,
     }
 }
 
@@ -1215,5 +1293,82 @@ start:
         assert_eq!(cpu.read_gpr(4), 1);
         let stored = u64::from_le_bytes(cpu.memory[0x100..0x108].try_into().unwrap());
         assert_eq!(stored, 30);
+    }
+
+    #[test]
+    fn parses_user_defined_slot_aliases() {
+        let source = r#"
+.processor {
+  width 4
+  hardware {
+    unit alu = integer_alu
+    unit mem = memory
+    unit ctrl = control
+    unit mul = multiplier
+  }
+  layout slots {
+    alias A0 = 0
+    alias A1 = 1
+    alias LS = 2
+    alias CT = 3
+    0 = { alu }
+    1 = { alu }
+    2 = { mem }
+    3 = { ctrl, mul }
+  }
+  cache { }
+  topology { cpus 1 }
+}
+
+entry:
+{
+  A0: movi r1, 4
+  A1: movi r2, 5
+  LS: nop
+  CT: nop
+}
+
+{
+  A0: add r3, r1, r2
+  CT: ret
+}
+"#;
+
+        let program = parse_program(source).expect("program should parse");
+
+        assert_eq!(program.bundles[0].syllables[0].opcode, Opcode::MovImm);
+        assert_eq!(program.bundles[0].syllables[1].opcode, Opcode::MovImm);
+        assert_eq!(program.bundles[0].syllables[2].opcode, Opcode::Nop);
+        assert_eq!(program.bundles[1].syllables[0].opcode, Opcode::Add);
+        assert_eq!(program.bundles[1].syllables[3].opcode, Opcode::Ret);
+    }
+
+    #[test]
+    fn rejects_slot_alias_outside_width() {
+        let source = r#"
+.processor {
+  width 4
+  hardware {
+    unit alu = integer_alu
+    unit mem = memory
+    unit ctrl = control
+    unit mul = multiplier
+  }
+  layout slots {
+    alias BAD = 4
+    0 = { alu }
+    1 = { alu }
+    2 = { mem }
+    3 = { ctrl, mul }
+  }
+  cache { }
+  topology { cpus 1 }
+}
+
+BAD: nop
+"#;
+
+        let err = parse_program(source).expect_err("program should fail");
+        assert!(err.contains("out of range for width 4"), "{err}");
     }
 }

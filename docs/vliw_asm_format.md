@@ -91,8 +91,13 @@ Rules:
 
 Slots can be written as symbolic names or numeric indices.
 
-- Symbolic: `i0`, `i1`, `m`, `x`.
+- Explicit aliases: declare `alias <name> = <slot>` inside `layout slots`.
+- Built-in compatibility aliases: `i0 = 0`, `i1 = 1`, `m = 2`, `x = 3`.
 - Numeric: `0..W-1`.
+
+Aliases name slot indices, not hardware unit classes. After an alias resolves
+to a numeric slot, the slot's declared unit set controls whether the opcode may
+issue there.
 
 For wider bundles, numeric slots are recommended. The canonical stage-0 layout repeats every 4 slots (`I, I, M, X`) by assigning `alu`, `alu`, `mem`, and `ctrl, mul` units.
 
@@ -181,6 +186,11 @@ also satisfy the scheduler contract in `docs/compiler_contract.md`:
   }
 
   layout slots {
+    alias I0 = 0
+    alias I1 = 1
+    alias M = 2
+    alias X = 3
+
     0 = { alu }
     1 = { alu }
     2 = { mem }
@@ -193,23 +203,23 @@ also satisfy the scheduler contract in `docs/compiler_contract.md`:
 
 entry:
 {
-  i0: movi r1, 6
-  i1: movi r2, 7
-  m : nop
-  x : nop
+  I0: movi r1, 6
+  I1: movi r2, 7
+  M : nop
+  X : nop
 }
 
 {
-  i0: nop
-  i1: nop
-  m : nop
-  x : mul r3, r1, r2
+  I0: nop
+  I1: nop
+  M : nop
+  X : mul r3, r1, r2
 }
 
 {
-  i0: nop
-  i1: nop
-  m : std [r0 + 0x100], r3
-  x : ret
+  I0: nop
+  I1: nop
+  M : std [r0 + 0x100], r3
+  X : ret
 }
 ```

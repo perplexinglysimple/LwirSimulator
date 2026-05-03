@@ -988,7 +988,8 @@ fn main_binary_trace_mode_emits_stable_log() {
 
     let stdout = String::from_utf8(output.stdout).expect("stdout should be utf8");
     assert!(stdout.starts_with("trace v1 width=4\n"), "{stdout}");
-    assert!(stdout.contains("event kind=stall bundle=2"), "{stdout}");
+    assert!(stdout.contains("event kind=issue bundle=4"), "{stdout}");
+    assert!(!stdout.contains("event kind=stall"), "{stdout}");
     assert!(stdout.contains("mem slot=2 kind=store"), "{stdout}");
     assert!(stdout.contains("final pc="), "{stdout}");
 }

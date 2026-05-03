@@ -8,7 +8,6 @@ use std::fs;
 use std::process::ExitCode;
 use vliw_simulator::asm::parse_program;
 use vliw_simulator::cpu::{print_cpu_state, CpuState};
-use vliw_simulator::isa::Opcode;
 use vliw_simulator::latency::LatencyTable;
 use vliw_simulator::system::System;
 
@@ -66,9 +65,7 @@ fn main() -> ExitCode {
     }
 
     if trace {
-        let mut latencies = LatencyTable::default();
-        latencies.set(Opcode::Mul, 5);
-        let mut cpu = CpuState::new_for_layout(&program.layout, latencies);
+        let mut cpu = CpuState::new_for_layout(&program.layout, LatencyTable::default());
         let trace = cpu.trace_program(&program.layout, &program.bundles);
         print!("{trace}");
         return ExitCode::SUCCESS;
@@ -78,9 +75,7 @@ fn main() -> ExitCode {
     println!("Program: {path}");
     println!("Bundles: {}", program.bundles.len());
 
-    let mut latencies = LatencyTable::default();
-    latencies.set(Opcode::Mul, 5);
-    let mut system = match System::from_program(program, latencies) {
+    let mut system = match System::from_program(program, LatencyTable::default()) {
         Ok(system) => system,
         Err(err) => {
             eprintln!("failed to initialize system for `{path}`: {err}");

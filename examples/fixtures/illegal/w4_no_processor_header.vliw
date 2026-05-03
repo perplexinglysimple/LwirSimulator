@@ -1,3 +1,4 @@
+# expected-status: parse-error
 .width 4
 
 i0 movi r1, 1

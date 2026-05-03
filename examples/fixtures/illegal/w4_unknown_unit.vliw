@@ -1,3 +1,4 @@
+# expected-status: parse-error
 .processor {
   width 4
 

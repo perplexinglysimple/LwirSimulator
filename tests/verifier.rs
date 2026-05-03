@@ -667,27 +667,34 @@ fn detects_timing_violation_via_call_link_register_write() {
     assert!(has_rule(&diags, Rule::GprReadyCycle), "{diags:?}");
 }
 
-#[test]
-fn detects_timing_violation_in_hello_vliw() {
-    // hello.vliw: mul r3 at bundle 1 (lat=3), store r3 at bundle 2 — not enough gap.
-    let source = std::fs::read_to_string("examples/hello.vliw").unwrap();
-    let program = parse_program(&source).unwrap();
-    let diags = verify_program(&program.layout, &program.bundles, &LatencyTable::default());
-    assert!(has_rule(&diags, Rule::GprReadyCycle), "{diags:?}");
-}
-
 // ---------------------------------------------------------------------------
 // Clean programs produce no diagnostics
 // ---------------------------------------------------------------------------
 
 #[test]
-fn clean_program_produces_no_diagnostics() {
-    let source = std::fs::read_to_string("examples/clean_schedule.vliw").unwrap();
-    let program = parse_program(&source).unwrap();
-    let diags = verify_program(&program.layout, &program.bundles, &LatencyTable::default());
-    assert!(
-        diags.is_empty(),
-        "expected clean program but got: {diags:?}"
+fn top_level_positive_examples_are_clean() {
+    for path in [
+        "examples/clean_schedule.vliw",
+        "examples/hello.vliw",
+        "examples/mul_latency.vliw",
+        "examples/predication.vliw",
+    ] {
+        let source = std::fs::read_to_string(path).unwrap();
+        let program = parse_program(&source).unwrap();
+        let diags = verify_program(&program.layout, &program.bundles, &LatencyTable::default());
+        assert!(diags.is_empty(), "{path} should be clean: {diags:?}");
+    }
+}
+
+#[test]
+fn top_level_illegal_examples_report_expected_rules() {
+    assert_illegal_fixture::<4>(
+        "examples/illegal_raw_same_bundle.vliw",
+        &[Rule::SameBundleGprRaw],
+    );
+    assert_illegal_fixture::<4>(
+        "examples/illegal_wrong_slot.vliw",
+        &[Rule::SlotOpcodeLegality],
     );
 }
 

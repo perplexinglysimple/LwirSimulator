@@ -1,3 +1,4 @@
+# expected-rule: slot-opcode-legality
 .processor {
   width 4
 

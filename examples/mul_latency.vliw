@@ -24,10 +24,24 @@ start:
   i0: movi r1, 9
   i1: movi r2, 11
   m : nop
+  x : nop
+}
+
+{
+  i0: nop
+  i1: nop
+  m : nop
   x : mul r3, r1, r2
 }
 
-# Consumer intentionally delayed by one bundle.
+# Consumer intentionally delayed until the MUL result is ready.
+{
+  i0: nop
+  i1: nop
+  m : nop
+  x : nop
+}
+
 {
   i0: nop
   i1: nop
@@ -37,6 +51,13 @@ start:
 
 {
   i0: add r4, r3, r1
+  i1: nop
+  m : nop
+  x : nop
+}
+
+{
+  i0: nop
   i1: nop
   m : std [r0 + 0x120], r4
   x : ret

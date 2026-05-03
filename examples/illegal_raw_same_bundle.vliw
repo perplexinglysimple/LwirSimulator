@@ -1,3 +1,4 @@
+# expected-rule: same-bundle-gpr-raw
 .processor {
   width 4
 
