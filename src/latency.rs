@@ -139,6 +139,12 @@ impl LatencyTable {
                 (Opcode::POr,      1u32),
                 (Opcode::PXor,     1u32),
                 (Opcode::PNot,     1u32),
+                (Opcode::FpAdd32,  4u32),
+                (Opcode::FpMul32,  4u32),
+                (Opcode::FpAdd64,  6u32),
+                (Opcode::FpMul64,  6u32),
+                (Opcode::AesEnc,   4u32),
+                (Opcode::AesDec,   4u32),
                 (Opcode::Nop,      0u32),
             ],
         }

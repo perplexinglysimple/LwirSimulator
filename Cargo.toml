@@ -1,15 +1,15 @@
 [package]
-name = "lwir_simulator"
+name = "vliw_simulator"
 version = "0.1.0"
 edition = "2021"
 
 [[bin]]
-name = "lwir_simulator"
+name = "vliw_simulator"
 path = "src/main.rs"
 
 [[bin]]
-name = "lwir_verify"
-path = "src/bin/lwir_verify.rs"
+name = "vliw_verify"
+path = "src/bin/vliw_verify.rs"
 
 [dependencies]
 builtin = { path = "../verus/source/builtin", package = "verus_builtin" }
@@ -19,6 +19,6 @@ vstd = { path = "../verus/source/vstd" }
 [package.metadata.verus]
 verify = true
 
-# Run simulator with: cargo run --bin lwir_simulator -- <program.lwir>
-# Run verifier with:  cargo run --bin lwir_verify -- <program.lwir>
+# Run simulator with: cargo run --bin vliw_simulator -- <program.vliw>
+# Run verifier with:  cargo run --bin vliw_verify -- <program.vliw>
 # Verify with: cargo verus verify (requires cargo-verus in PATH)

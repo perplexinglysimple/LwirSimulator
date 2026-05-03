@@ -1,25 +1,14 @@
-/// Instruction Set Architecture for the LWIR VLIW processor.
+/// Instruction Set Architecture for the VLIW processor.
 ///
-/// Bundle width W is a compile-time const in [4, 8, 16, 32, 64, 128, 256].
-/// Slots cycle through slot classes: I (integer), M (memory), X (control/mul).
+/// Bundle width is declared by the runtime processor layout in [4, 8, 16, 32, 64, 128, 256].
+/// Slot legality is declared by the runtime processor layout.
 use builtin::*;
 use builtin_macros::*;
 use vstd::prelude::*;
 
 verus! {
 
-/// Slot class determines which functional unit executes an operation.
-#[derive(Clone, Copy, PartialEq, Eq, Debug)]
-pub enum SlotClass {
-    /// Integer ALU slot for arithmetic, logic, moves, and integer compares.
-    Integer,
-    /// Memory/address slot for loads, stores, address formation, and cache hints.
-    Memory,
-    /// Control/multiply slot for control flow, predicate logic, and long-latency multiply work.
-    Control,
-}
-
-/// An opcode for the LWIR ISA.
+/// An opcode for the VLIW ISA.
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
 pub enum Opcode {
     // Integer slot ops
@@ -70,6 +59,14 @@ pub enum Opcode {
     Lea,
     /// Non-binding cache hint with no architectural state change.
     Prefetch,
+    /// Acquire-ordered 8-byte load. Semantically a `LoadD` with the bus total-order
+    /// visibility guarantee: the value read reflects all `RelStore`s that committed
+    /// before this CPU's bus slot.
+    AcqLoad,
+    /// Release-ordered 8-byte store. Semantically a `StoreD` with the bus total-order
+    /// visibility guarantee: the written value is visible to all subsequent `AcqLoad`s
+    /// on other CPUs within `worst_case_visibility(layout)` cycles.
+    RelStore,
     // Control/multiply slot ops
     /// Low 64 bits of `src0 * src1`.
     Mul,
@@ -91,51 +88,21 @@ pub enum Opcode {
     PXor,
     /// Predicate-register NOT.
     PNot,
+    /// Placeholder FP32 add over GPR bit patterns.
+    FpAdd32,
+    /// Placeholder FP32 multiply over GPR bit patterns.
+    FpMul32,
+    /// Placeholder FP64 add over GPR bit patterns.
+    FpAdd64,
+    /// Placeholder FP64 multiply over GPR bit patterns.
+    FpMul64,
+    /// Placeholder AES encrypt round over GPR bit patterns.
+    AesEnc,
+    /// Placeholder AES decrypt round over GPR bit patterns.
+    AesDec,
     // Universal
     /// Do nothing.
     Nop,
-}
-
-/// Spec: maps each opcode to its slot class.
-pub open spec fn spec_slot_class(op: Opcode) -> SlotClass {
-    match op {
-        Opcode::Add | Opcode::Sub | Opcode::And | Opcode::Or | Opcode::Xor
-        | Opcode::Shl | Opcode::Srl | Opcode::Sra | Opcode::Mov | Opcode::MovImm
-        | Opcode::CmpEq | Opcode::CmpLt | Opcode::CmpUlt | Opcode::Nop
-            => SlotClass::Integer,
-        Opcode::LoadB | Opcode::LoadH | Opcode::LoadW | Opcode::LoadD
-        | Opcode::StoreB | Opcode::StoreH | Opcode::StoreW | Opcode::StoreD
-        | Opcode::Lea | Opcode::Prefetch
-            => SlotClass::Memory,
-        Opcode::Mul | Opcode::MulH | Opcode::Branch | Opcode::Jump
-        | Opcode::Call | Opcode::Ret | Opcode::PAnd | Opcode::POr
-        | Opcode::PXor | Opcode::PNot
-            => SlotClass::Control,
-    }
-}
-
-impl Opcode {
-    /// Default slot class for this opcode.
-    /// Postcondition: result exactly matches the spec for every opcode.
-    pub fn slot_class(self) -> (ret: SlotClass)
-        ensures ret == spec_slot_class(self),
-    {
-        match self {
-            Opcode::Add | Opcode::Sub | Opcode::And | Opcode::Or | Opcode::Xor
-            | Opcode::Shl | Opcode::Srl | Opcode::Sra | Opcode::Mov | Opcode::MovImm
-            | Opcode::CmpEq | Opcode::CmpLt | Opcode::CmpUlt => SlotClass::Integer,
-
-            Opcode::LoadB | Opcode::LoadH | Opcode::LoadW | Opcode::LoadD
-            | Opcode::StoreB | Opcode::StoreH | Opcode::StoreW | Opcode::StoreD
-            | Opcode::Lea | Opcode::Prefetch => SlotClass::Memory,
-
-            Opcode::Mul | Opcode::MulH | Opcode::Branch | Opcode::Jump
-            | Opcode::Call | Opcode::Ret | Opcode::PAnd | Opcode::POr
-            | Opcode::PXor | Opcode::PNot => SlotClass::Control,
-
-            Opcode::Nop => SlotClass::Integer,
-        }
-    }
 }
 
 /// A single syllable (one slot's worth of instruction) in a bundle.
@@ -199,16 +166,47 @@ impl Opcode {
     /// Exhaustive match: adding a new opcode to the enum forces an update here.
     pub fn writes_gpr(self) -> bool {
         match self {
-            Opcode::Add | Opcode::Sub | Opcode::And | Opcode::Or | Opcode::Xor
-            | Opcode::Shl | Opcode::Srl | Opcode::Sra | Opcode::Mov | Opcode::MovImm
-            | Opcode::Mul | Opcode::MulH | Opcode::Lea
-            | Opcode::LoadB | Opcode::LoadH | Opcode::LoadW | Opcode::LoadD
+            Opcode::Add
+            | Opcode::Sub
+            | Opcode::And
+            | Opcode::Or
+            | Opcode::Xor
+            | Opcode::Shl
+            | Opcode::Srl
+            | Opcode::Sra
+            | Opcode::Mov
+            | Opcode::MovImm
+            | Opcode::Mul
+            | Opcode::MulH
+            | Opcode::Lea
+            | Opcode::LoadB
+            | Opcode::LoadH
+            | Opcode::LoadW
+            | Opcode::LoadD
+            | Opcode::AcqLoad
+            | Opcode::FpAdd32
+            | Opcode::FpMul32
+            | Opcode::FpAdd64
+            | Opcode::FpMul64
+            | Opcode::AesEnc
+            | Opcode::AesDec
             | Opcode::Call => true,
-            Opcode::CmpEq | Opcode::CmpLt | Opcode::CmpUlt
-            | Opcode::StoreB | Opcode::StoreH | Opcode::StoreW | Opcode::StoreD
+            Opcode::CmpEq
+            | Opcode::CmpLt
+            | Opcode::CmpUlt
+            | Opcode::StoreB
+            | Opcode::StoreH
+            | Opcode::StoreW
+            | Opcode::StoreD
+            | Opcode::RelStore
             | Opcode::Prefetch
-            | Opcode::Branch | Opcode::Jump | Opcode::Ret
-            | Opcode::PAnd | Opcode::POr | Opcode::PXor | Opcode::PNot
+            | Opcode::Branch
+            | Opcode::Jump
+            | Opcode::Ret
+            | Opcode::PAnd
+            | Opcode::POr
+            | Opcode::PXor
+            | Opcode::PNot
             | Opcode::Nop => false,
         }
     }
@@ -217,15 +215,47 @@ impl Opcode {
     /// Exhaustive match: adding a new opcode to the enum forces an update here.
     pub fn writes_pred(self) -> bool {
         match self {
-            Opcode::CmpEq | Opcode::CmpLt | Opcode::CmpUlt
-            | Opcode::PAnd | Opcode::POr | Opcode::PXor | Opcode::PNot => true,
-            Opcode::Add | Opcode::Sub | Opcode::And | Opcode::Or | Opcode::Xor
-            | Opcode::Shl | Opcode::Srl | Opcode::Sra | Opcode::Mov | Opcode::MovImm
-            | Opcode::Mul | Opcode::MulH | Opcode::Lea
-            | Opcode::LoadB | Opcode::LoadH | Opcode::LoadW | Opcode::LoadD
-            | Opcode::StoreB | Opcode::StoreH | Opcode::StoreW | Opcode::StoreD
+            Opcode::CmpEq
+            | Opcode::CmpLt
+            | Opcode::CmpUlt
+            | Opcode::PAnd
+            | Opcode::POr
+            | Opcode::PXor
+            | Opcode::PNot => true,
+            Opcode::Add
+            | Opcode::Sub
+            | Opcode::And
+            | Opcode::Or
+            | Opcode::Xor
+            | Opcode::Shl
+            | Opcode::Srl
+            | Opcode::Sra
+            | Opcode::Mov
+            | Opcode::MovImm
+            | Opcode::Mul
+            | Opcode::MulH
+            | Opcode::Lea
+            | Opcode::LoadB
+            | Opcode::LoadH
+            | Opcode::LoadW
+            | Opcode::LoadD
+            | Opcode::AcqLoad
+            | Opcode::FpAdd32
+            | Opcode::FpMul32
+            | Opcode::FpAdd64
+            | Opcode::FpMul64
+            | Opcode::AesEnc
+            | Opcode::AesDec
+            | Opcode::StoreB
+            | Opcode::StoreH
+            | Opcode::StoreW
+            | Opcode::StoreD
+            | Opcode::RelStore
             | Opcode::Prefetch
-            | Opcode::Branch | Opcode::Jump | Opcode::Call | Opcode::Ret
+            | Opcode::Branch
+            | Opcode::Jump
+            | Opcode::Call
+            | Opcode::Ret
             | Opcode::Nop => false,
         }
     }
@@ -236,14 +266,43 @@ impl Opcode {
     pub fn reads_pred_src(self) -> bool {
         match self {
             Opcode::PAnd | Opcode::POr | Opcode::PXor | Opcode::PNot => true,
-            Opcode::Add | Opcode::Sub | Opcode::And | Opcode::Or | Opcode::Xor
-            | Opcode::Shl | Opcode::Srl | Opcode::Sra | Opcode::Mov | Opcode::MovImm
-            | Opcode::CmpEq | Opcode::CmpLt | Opcode::CmpUlt
-            | Opcode::Mul | Opcode::MulH | Opcode::Lea
-            | Opcode::LoadB | Opcode::LoadH | Opcode::LoadW | Opcode::LoadD
-            | Opcode::StoreB | Opcode::StoreH | Opcode::StoreW | Opcode::StoreD
+            Opcode::Add
+            | Opcode::Sub
+            | Opcode::And
+            | Opcode::Or
+            | Opcode::Xor
+            | Opcode::Shl
+            | Opcode::Srl
+            | Opcode::Sra
+            | Opcode::Mov
+            | Opcode::MovImm
+            | Opcode::CmpEq
+            | Opcode::CmpLt
+            | Opcode::CmpUlt
+            | Opcode::Mul
+            | Opcode::MulH
+            | Opcode::Lea
+            | Opcode::LoadB
+            | Opcode::LoadH
+            | Opcode::LoadW
+            | Opcode::LoadD
+            | Opcode::AcqLoad
+            | Opcode::FpAdd32
+            | Opcode::FpMul32
+            | Opcode::FpAdd64
+            | Opcode::FpMul64
+            | Opcode::AesEnc
+            | Opcode::AesDec
+            | Opcode::StoreB
+            | Opcode::StoreH
+            | Opcode::StoreW
+            | Opcode::StoreD
+            | Opcode::RelStore
             | Opcode::Prefetch
-            | Opcode::Branch | Opcode::Jump | Opcode::Call | Opcode::Ret
+            | Opcode::Branch
+            | Opcode::Jump
+            | Opcode::Call
+            | Opcode::Ret
             | Opcode::Nop => false,
         }
     }

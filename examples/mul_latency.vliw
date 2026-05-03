@@ -1,5 +1,23 @@
-.width 4
+.processor {
+  width 4
 
+  hardware {
+    unit alu = integer_alu
+    unit mem = memory
+    unit ctrl = control
+    unit mul = multiplier
+  }
+
+  layout slots {
+    0 = { alu }
+    1 = { alu }
+    2 = { mem }
+    3 = { ctrl, mul }
+  }
+
+  cache { }
+  topology { cpus 1 }
+}
 # Demonstrates an explicit bubble while waiting for a multi-cycle MUL result.
 start:
 {

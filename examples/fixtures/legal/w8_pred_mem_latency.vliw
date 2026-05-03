@@ -1,7 +1,29 @@
 # expected: clean
 # Covers width 8 repeated slot classes, predication, stores, load latency gaps, and mul issue.
-.width 8
+.processor {
+  width 8
 
+  hardware {
+    unit alu = integer_alu
+    unit mem = memory
+    unit ctrl = control
+    unit mul = multiplier
+  }
+
+  layout slots {
+    0 = { alu }
+    1 = { alu }
+    2 = { mem }
+    3 = { ctrl, mul }
+    4 = { alu }
+    5 = { alu }
+    6 = { mem }
+    7 = { ctrl, mul }
+  }
+
+  cache { }
+  topology { cpus 1 }
+}
 {
   0: movi r1, 0x200
   1: movi r2, 10

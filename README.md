@@ -1,81 +1,96 @@
-# LwirSimulator
+# VliwSimulator
 
 A cycle-approximate **VLIW** (Very Long Instruction Word) simulator written in
 Rust and verified with [Verus](https://github.com/verus-lang/verus).
 
-The simulator is the architectural reference for the LWIR ISA and the execution
+The simulator is the architectural reference for the VLIW ISA and the execution
 model for compiler bring-up, scheduling experiments, and backend validation.
 
 ---
 
 ## Architecture overview
 
-LWIR is a statically scheduled VLIW ISA. Bundle structure, slot classes, and
-operation placement are explicit in the instruction stream rather than inferred
-by dynamic issue hardware. The simulator keeps that model concrete and
-compiler-facing: resource usage is visible, latency is modeled explicitly, and
-architectural state evolves in bundle order.
+This project models a statically scheduled VLIW ISA. Bundle structure, slot
+classes, and operation placement are explicit in the instruction stream rather
+than inferred by dynamic issue hardware. The simulator keeps that model
+concrete and compiler-facing: resource usage is visible, latency is modeled
+explicitly, and architectural state evolves in bundle order.
 
-The current implementation follows a conservative FVLIW-style design point that
-keeps backend work tractable while still exercising the important VLIW problems:
-packet legality, latency modeling, predicate handling, and memory/control slot
-constraints.
+The processor shape — bundle width, the catalog of hardware units, the
+per-slot unit set, the L1D cache, the architectural register/memory sizes, and
+the multi-CPU topology — is declared by a mandatory `.processor { ... }` header
+on every program. The header is the single source of truth for slot legality,
+load latency, bus arbitration, and coherence; nothing about the machine shape
+is hard-coded into the simulator.
 
 | Property | Value |
 |---|---|
-| **Bundle width W** | Compile-time const, power-of-2 in **[4 … 256]** |
-| **Slot classes** per 4-slot group | `I0`, `I1`, `M`, `X` (integer×2, memory, control/mul) |
-| **GPRs** | 32 × 64-bit (`r0` = 0 hardwired) |
-| **Predicate registers** | 16 × 1-bit (`p0` = true hardwired) |
-| **Memory** | 64 KiB byte-addressed, little-endian |
-| **Exception model** | Precise by slot order; no speculative loads in v1 |
-| **Memory ordering** | Relaxed base + `LD.ACQ`/`ST.REL`/`FENCE` (ISA stubs present) |
+| **Bundle width W** | Runtime, power-of-2 in **[4 … 256]**, declared by `.processor { width N }` |
+| **Slot composition** | Per-slot set of hardware units, declared in `layout slots { ... }` |
+| **Built-in unit kinds** | `integer_alu`, `memory`, `control`, `multiplier`, `fp { variant ... }`, `aes { variant aes_ni }` |
+| **GPRs** | 32 × 64-bit by default (`r0` = 0 hardwired); configurable via `arch { gprs N }` |
+| **Predicate registers** | 16 × 1-bit by default (`p0` = true hardwired); configurable via `arch { preds N }` |
+| **Memory** | 64 KiB byte-addressed little-endian by default; configurable via `arch { memory N }` |
+| **L1D cache** | Direct-mapped, write-back, MSI-coherent across CPUs |
+| **Topology** | `topology { cpus N }`; symmetric layout per CPU |
+| **Bus** | Shared, deterministic round-robin: cycle `c` is owned by CPU `c % cpus` |
+| **Memory ordering** | Bus total order; `acqload` / `relstore` are concrete ordering opcodes |
 
-### Bundle width
+### Layout-driven slot legality
 
-The bundle width `W` is a **Rust const generic**:
-
-```rust
-const W: usize = 4;   // 4, 8, 16, 32, 64, 128, or 256
-let cpu = CpuState::<W>::new(latencies);
-```
-
-Slot classes cycle through `I, I, M, X` modulo 4 regardless of `W`.
-A 16-wide bundle therefore has four groups of `(I0, I1, M, X)`.
-
-This preserves the core VLIW rule that issue structure is architectural. A
-bundle is not a bag of interchangeable ops; each slot maps to a specific class
-of work.
+The canonical 4-slot pattern (`I, I, M, X`) is one specific layout, not a hard
+rule. A slot's accepted opcode set is the union of opcodes its declared units
+can execute. A slot may host multiple units (e.g. `{ ctrl, mul }`), in which
+case dispatch picks the first listed unit that executes the opcode. Programs
+that schedule opcodes onto slots whose declared units cannot execute them are
+rejected at parse / verify time.
 
 ---
 
 ## Configurable latencies
 
-The machine model assigns an explicit latency to every opcode. The latency table
-is configurable before CPU construction:
+The machine model assigns an explicit latency to every opcode. Non-load
+latencies come from a `LatencyTable` that callers can mutate before CPU
+construction:
 
 ```rust
 let mut latencies = LatencyTable::default();
-latencies.set(Opcode::Mul,   5);   // model a slow multiplier
-latencies.set(Opcode::LoadD, 10);  // model high-latency DRAM
-let cpu = CpuState::<W>::new(latencies);
+latencies.set(Opcode::Mul, 5);   // model a slow multiplier
+let cpu = CpuState::new_for_layout(&layout, latencies);
 ```
 
-Default latencies (in cycles):
+**Load latency is no longer a single table entry.** Loads route through the L1D
+cache: the runtime returns `hit_latency` on a hit and `miss_latency` (plus
+`writeback_latency` on a dirty miss) on a miss. The verifier uses a closed-form
+worst-case bound:
+
+```
+worst_case_load_latency = (cpus − 1) × 1
+                        + miss_latency
+                        + writeback_latency
+                        + coherence_drain
+```
+
+`coherence_drain` is `0` for single-CPU layouts and `cache.writeback_latency`
+for multi-CPU layouts (the closed-form upper bound on a single MSI
+invalidation/upgrade — see ADR 0004).
+
+Default non-load latencies (in cycles):
 
 | Class | Latency |
 |---|---|
 | Integer ALU, LEA | 1 |
-| Load (any width) | 3 |
 | Store, Prefetch | 1 |
 | Multiply (MUL/MULH) | 3 |
 | Control (BR, J, CALL, RET) | 1 |
 | Predicate ops | 1 |
+| FP placeholder | 4–6 by variant |
+| AES placeholder | 4 |
 | NOP | 0 |
 
-This matches the intended use of the simulator as a cycle-aware reference for
-compiler scheduling work. The model does not hide latency behind dynamic issue
-or out-of-order execution.
+The default L1D config is `line_bytes 64`, `capacity 4096`, `hit_latency 1`,
+`miss_latency 3`, `writeback_latency 0`. A concrete `cache { l1d { ... } }`
+block in the header overrides these.
 
 ---
 
@@ -92,20 +107,26 @@ let val = cpu.read_gpr(3);
 let cond = cpu.read_pred(1);
 
 // dump everything
-lwir_simulator::cpu::print_cpu_state(&cpu);
+vliw_simulator::cpu::print_cpu_state(&cpu);
 
 // clone the full state for checkpointing
 let checkpoint = cpu.clone();
 ```
 
 Architectural state includes:
-- `gprs: Vec<u64>` — all 32 general-purpose registers
-- `preds: Vec<bool>` — all 16 predicate registers
+- `width: usize` — runtime bundle width
+- `gprs: Vec<u64>`, `num_gprs: usize` — general-purpose register file
+- `preds: Vec<bool>`, `num_preds: usize` — predicate register file
 - `pc: usize` — bundle-level program counter
 - `cycle: u64` — cycle counter (includes stall modeling)
 - `scoreboard: Vec<ScoreboardEntry>` — per-GPR ready cycle
-- `memory: Vec<u8>` — 64 KiB flat address space
+- `memory: Vec<u8>`, `mem_size: usize` — local view of architectural memory
+- `cache: CacheState` — direct-mapped L1D with MSI line state
 - `halted: bool` — set when `RET` is executed with `lr == 0`
+- `latencies: LatencyTable` — non-load opcode latencies
+
+Multi-CPU programs run inside `vliw_simulator::system::System`, which owns the
+shared memory, the per-CPU `CpuState` vector, and the bus.
 
 ---
 
@@ -120,20 +141,21 @@ Architectural state includes:
 ### Build and run a text assembly program
 
 ```sh
-cargo run --bin lwir_simulator -- examples/hello.lwir
+cargo run --bin vliw_simulator -- examples/hello.vliw
 ```
 
-The simulator reads `.width <n>` when present and dispatches to widths
-`4, 8, 16, 32, 64, 128, 256`; files without a width directive default to `W=4`.
+The simulator requires a leading `.processor { ... }` header. The CLI accepts
+one program file and rejects layouts whose `topology { cpus N }` is not 1.
+Multi-CPU programs run from Rust against `System::new(layout, programs, ...)`.
 
 Expected output:
 
 ```
-LWIR VLIW Simulator (W=4)
-Program: examples/hello.lwir
+VLIW Simulator (W=4)
+Program: examples/hello.vliw
 Bundles: 3
 
-=== LWIR Processor State (width=4) ===
+=== VLIW Processor State (width=4) ===
   PC: 3  Cycle: 7  Halted: true
   GPRs:
     r1  = 0x0000000000000006  (6)
@@ -150,47 +172,71 @@ Use `--trace` to emit a deterministic scheduler-debug log instead of the final
 state dump:
 
 ```sh
-cargo run --bin lwir_simulator -- --trace examples/hello.lwir
+cargo run --bin vliw_simulator -- --trace examples/hello.vliw
 ```
 
 The trace format is line-oriented and starts with `trace v1 width=<n>`. Each
 event records the bundle index, cycle, issue/stall/illegal outcome, active
-non-`nop` syllables, stalls, GPR writes, predicate writes, memory effects, and
-branch/jump/call/return decisions, followed by a final `pc/cycle/halted` line.
+non-`nop` syllables, stalls, GPR writes, predicate writes, memory effects
+(including cache outcome), and branch/jump/call/return decisions, followed by a
+final `pc/cycle/halted` line.
 
 ### Text assembly format
 
-`lwir_simulator` consumes the stable bundle-level text format documented in
-[`docs/lwir_asm_format.md`](docs/lwir_asm_format.md). The format is intended for
-early backend output, regression fixtures, and golden tests.
+`vliw_simulator` consumes the stable bundle-level text format documented in
+[`docs/vliw_asm_format.md`](docs/vliw_asm_format.md). The format is intended
+for early backend output, regression fixtures, and golden tests.
 
 Current rules:
-- the parser accepts either one bundle per non-empty line or brace-delimited bundle blocks
+- a mandatory `.processor { ... }` header declares width, units, slot layout,
+  cache, and topology
+- the parser accepts either one bundle per non-empty line or brace-delimited
+  bundle blocks
 - line form uses `|` to separate multiple syllables in the same bundle
 - block form uses one `slot: instruction` per line inside `{ ... }`
 - labels end with `:` and may prefix a bundle line or a following bundle block
-- optional `.width <n>` must match the compiled bundle width
 - comments start with `#`
-- the first token is the slot: `i0`, `i1`, `m`, `x`, or a numeric slot index
+- the first token of each syllable is the slot: `i0`, `i1`, `m`, `x`, or a
+  numeric slot index
 - branches use `branch pN, target` or `branch !pN, target`
 - non-branch instructions may use an optional guard prefix like `[p1]` or `[!p2]`
 - `movi` is accepted as an alias for `mov_imm`
-- loads/stores accept either `dst, base, imm` / `base, src, imm` or bracketed memory syntax like `ldd r1, [r0 + 0x20]` and `std [r0 + 0x20], r1`
+- loads/stores accept either `dst, base, imm` / `base, src, imm` or bracketed
+  memory syntax like `ldd r1, [r0 + 0x20]` and `std [r0 + 0x20], r1`
 
-Example:
+Minimal example:
 
 ```text
+.processor {
+  width 4
+
+  hardware {
+    unit alu = integer_alu
+    unit mem = memory
+    unit ctrl = control
+    unit mul = multiplier
+  }
+
+  layout slots {
+    0 = { alu }
+    1 = { alu }
+    2 = { mem }
+    3 = { ctrl, mul }
+  }
+
+  cache { }
+  topology { cpus 1 }
+}
+
 start: i0 mov_imm r1, 6 | i1 mov_imm r2, 7
        x mul r3, r1, r2
        m store_d r0, r3, 0x100
        x ret
 ```
 
-Block-style example:
+Block-style is equivalent:
 
 ```text
-.width 4
-
 start:
 {
   I0: movi r1, 10
@@ -207,6 +253,8 @@ Supported operand shapes:
 - `cmpeq/cmplt/cmpult pdst, src0, src1`
 - `load_b/load_h/load_w/load_d dst, base, imm`
 - `store_b/store_h/store_w/store_d base, src, imm`
+- `acqload dst, base, imm` (acquire-ordered 8-byte load)
+- `relstore base, src, imm` (release-ordered 8-byte store)
 - `lea dst, base, imm`
 - `prefetch base, imm`
 - `branch pred, target`
@@ -215,29 +263,48 @@ Supported operand shapes:
 - `ret`
 - `pand/por/pxor pdst, psrc0, psrc1`
 - `pnot pdst, psrc0`
+- `fpadd32/fpmul32/fpadd64/fpmul64 dst, src0, src1` (placeholder semantics)
+- `aesenc/aesdec dst, src0, src1` (placeholder semantics)
 - `nop`
 
 ### Check a program with the static verifier
 
-`lwir_verify` checks a `.lwir` / `.lwirasm` file against the compiler/scheduler
-contract in [`docs/compiler_contract.md`](docs/compiler_contract.md) without
-executing the program. It reads `.width <n>` when present and supports widths
-`4, 8, 16, 32, 64, 128, 256`; files without a width directive default to `W=4`.
+`vliw_verify` checks a `.vliw` file against the compiler/scheduler contract in
+[`docs/compiler_contract.md`](docs/compiler_contract.md) without executing the
+program. It uses the mandatory `.processor { ... }` header for layout, cache,
+and topology.
 
 ```sh
-cargo run --bin lwir_verify -- examples/clean_schedule.lwir
-cargo run --bin lwir_verify -- examples/illegal_raw_same_bundle.lwir
+cargo run --bin vliw_verify -- examples/clean_schedule.vliw
+cargo run --bin vliw_verify -- examples/illegal_raw_same_bundle.vliw
 ```
 
 Exit codes:
-- `0` - clean program
-- `1` - compiler-contract violation(s)
-- `2` - usage error or parse failure
+- `0` — clean program
+- `1` — compiler-contract violation(s)
+- `2` — usage error or parse failure
+
+The verifier emits diagnostics tagged with one of:
+
+- `slot-opcode-legality` — opcode not executable by the slot's declared units
+- `same-bundle-gpr-raw` — later syllable reads a GPR an earlier syllable writes
+- `same-bundle-gpr-waw` — two syllables write the same GPR in the same bundle
+- `same-bundle-pred-hazard` — predicate RAW or WAW within a bundle
+- `gpr-ready-cycle` — a GPR source is not ready at issue under the configured
+  layout's worst-case load latency
+- `bus-slot-conflict` — a memory op is scheduled on a cycle the issuing CPU
+  does not own (multi-CPU only)
+- `unbounded-polling-loop` — a backward branch over an `acqload` has no
+  matching `relstore` on any other CPU (multi-CPU only)
 
 The verifier is deliberately conservative about predicate guards. It treats
 every non-`nop` syllable as potentially active, so complementary predicated
 writes in the same bundle may run in the simulator but still fail static
 verification.
+
+The `vliw_verify` CLI runs single-CPU verification. The whole-system check
+that adds the cross-CPU polling-loop pass is exposed as
+`verifier::verify_system` for callers that drive multi-CPU programs from Rust.
 
 ### Verify with Verus
 
@@ -253,7 +320,7 @@ vargo build
 Verify this project:
 
 ```sh
-# from LwirSimulator/
+# from VliwSimulator/
 cargo verus verify
 ```
 
@@ -264,8 +331,8 @@ cargo test --all-targets
 ```
 
 GitHub Actions runs `cargo verus verify`, `cargo test --all-targets`, explicit
-`lwir_simulator --trace` runs over the legal golden fixtures, explicit
-`lwir_verify` runs over the legal and illegal golden fixtures, and coverage on
+`vliw_simulator --trace` runs over the legal golden fixtures, explicit
+`vliw_verify` runs over the legal and illegal golden fixtures, and coverage on
 every push to `main` / `master` and on pull requests.
 
 ### Measure code coverage
@@ -285,47 +352,53 @@ cargo llvm-cov --workspace --all-targets --lcov --output-path lcov.info
 This writes `lcov.info` at the repo root. GitHub Actions also runs the same
 coverage command and uploads the LCOV file as a build artifact.
 
-The current local baseline is approximately:
-- total line coverage: `98%`
-- `cpu` module line coverage: `97%`
-
 ---
 
 ## Project layout
 
 ```
 src/
-  main.rs      - CLI runner for text assembly programs
-  lib.rs       - crate root
-  asm.rs       - text assembly parser and loader
-  isa.rs       - opcodes, slot classes, Syllable type
-  bundle.rs    - Bundle<W> with Verus width invariant
-  verifier.rs  - static compiler-contract verifier and proof boundary
-  cpu.rs       - thin module wrapper for the CPU implementation
-  bin/
-    lwir_verify.rs - standalone verifier CLI
+  main.rs       - CLI runner for text assembly programs
+  lib.rs        - crate root
+  asm.rs        - text assembly parser and `.processor` header loader
+  isa.rs        - Opcode enum, Syllable type, side-effect helpers
+  bundle.rs     - runtime-width Bundle with Verus width invariant
+  layout.rs     - ProcessorLayout, UnitKind/UnitDecl, slot legality, arch/topology
+  program.rs    - Program = layout + bundles
+  cache.rs     - direct-mapped L1D cache, MSI line state, coherence specs
+  system.rs    - System: shared memory, per-CPU CpuStates, bus arbitration,
+                 worst-case visibility / coherence drain
+  hw/mod.rs     - hardware-unit helper hooks
+  latency.rs    - LatencyTable for non-load opcode cycles
+  verifier.rs   - static compiler-contract verifier and proof boundary
+  cpu.rs        - thin module wrapper for the CPU implementation
   cpu/
-    types.rs   - architectural constants, CpuState, scoreboard types
-    spec.rs    - spec helpers used by the verified execution contracts
-    state.rs   - well-formedness, constructor, register/predicate accessors
+    types.rs    - architectural constants, CpuState, scoreboard types
+    spec.rs     - spec helpers used by the verified execution contracts
+    state.rs    - well-formedness, constructors (incl. new_for_layout)
     legality.rs - packet legality checks and scoreboard stall checks
-    memory.rs  - verified load/store helpers
-    execute.rs - writeback, opcode-family execution, step()
-    printer.rs - human-readable state dump
-    trace.rs   - deterministic execution trace mode
-  latency.rs   - LatencyTable (configurable per-opcode cycles)
+    memory.rs   - verified load/store helpers
+    execute.rs  - writeback, opcode-family execution, step()
+    printer.rs  - human-readable state dump
+    trace.rs    - deterministic execution trace mode
+  bin/
+    vliw_verify.rs - standalone verifier CLI
 
 docs/
-  compiler_contract.md - scheduler legality contract
-  lwir_asm_format.md   - stable text assembly format
+  compiler_contract.md             - scheduler legality contract
+  vliw_asm_format.md               - stable text assembly format
+  processor_layout_plan.md         - layout/cache/multi-CPU rollout plan
+  processor_layout_task_breakdown.md - staged implementation breakdown
+  adr/                             - per-stage architecture decision records
 
 examples/
-  *.lwir       - clean and intentionally illegal assembly examples
-  fixtures/    - backend golden fixtures across widths 4, 8, and 16
+  *.vliw                  - clean and intentionally illegal assembly examples
+  fixtures/legal/*.vliw   - backend golden fixtures across widths 4, 8, and 16
+  fixtures/illegal/*.vliw - rule-tagged failure fixtures
 
 tests/
-  smoke.rs     - runtime simulator coverage
-  verifier.rs  - static verifier and CLI coverage
+  smoke.rs    - runtime simulator coverage
+  verifier.rs - static verifier and CLI coverage
 ```
 
 ---
@@ -333,34 +406,58 @@ tests/
 ## Verus annotations
 
 Verus `spec` and `proof` constructs encode core architectural properties and
-connect some executable checks to conservative specs:
+connect executable checks to conservative specs:
 
 - `is_valid_width(W)` — bundle width is a power-of-two in [4, 256]
 - Loop invariants in `Bundle::nop_bundle` (length grows monotonically)
 - Pre-conditions on `Bundle::set_slot` (slot index in range)
-- CPU well-formedness facts for register, predicate, memory, and scoreboard state
-- Conservative verifier predicates for slot legality and same-bundle GPR/predicate hazards
-- Soundness lemmas showing conservative verifier success implies the matching
-  active-pair runtime legality condition
+- CPU well-formedness facts for register, predicate, memory, scoreboard, and
+  cache state (`CpuState::wf`)
+- Layout well-formedness (`layout_well_formed`, `arch_supported`,
+  `topology_supported`) and program/layout compatibility
+  (`program_layout_compatible`)
+- Conservative verifier predicates for slot legality and same-bundle GPR /
+  predicate hazards, plus soundness lemmas (`lemma_*_implies_active_pair_ok`)
+  showing conservative success implies the matching active-pair runtime
+  legality condition
+- Closed-form bus schedule (`spec_bus_owner`, `spec_bus_slot`,
+  `lemma_bus_slot_unique`) and at-most-one-modified MSI invariant
+  (`spec_at_most_one_modified_cache_states`,
+  `lemma_two_cpu_store_commit_preserves_msi_invariant`)
 
 Functions marked `#[verifier::external]` such as `print_cpu_state` compile and
 run normally without entering the proof boundary. The main remaining trusted
-surface is executable code marked `#[verifier::external_body]`, especially the
-static verifier entry point and latency-table defaults.
+surface is executable code marked `#[verifier::external_body]` —
+`verify_program` / `verify_program_for_cpu` and `LatencyTable::default`.
 
 ---
 
 ## Current status
 
-The project has moved past first simulator bring-up:
+Stages 0 through 4D of `docs/processor_layout_plan.md` are merged:
 
-- [x] Runtime bundle legality checks for slot class, same-bundle RAW/WAW, predicate hazards, and call/return link-register hazards
-- [x] Scoreboard stalls for read-before-ready GPR dependencies
+- [x] Runtime-width data model with mandatory `.processor { ... }` header
+      (Stage 0)
+- [x] Layout-driven slot legality and dispatch; canonical `I, I, M, X` layout
+      preserved as one concrete layout (Stage 1)
+- [x] Composable hardware units: FP variants and AES alongside the integer /
+      memory / control / multiplier built-ins (Stage 2)
+- [x] Direct-mapped L1D cache with hit / miss / dirty-eviction latencies, used
+      by the runtime *and* the verifier's worst-case load bound (Stage 3)
+- [x] System shell and shared memory with multiple `CpuState`s under one
+      global cycle (Stage 4A)
+- [x] Deterministic round-robin bus arbitration with `bus-slot-conflict`
+      verifier diagnostic (Stage 4B)
+- [x] `acqload` / `relstore` ordering opcodes and a cross-CPU pass that
+      rejects unbounded polling loops (Stage 4C)
+- [x] MSI cache coherence with the two-CPU `at_most_one_modified` invariant
+      proved at the cache-transition level; coherence drain folded into the
+      verifier's worst-case visibility bound (Stage 4D, ADR 0004)
 - [x] Stable bundle-level text assembly format with examples
-- [x] Standalone `lwir_verify` CLI for static compiler-contract checks
-- [x] Deterministic trace mode for scheduler debugging (`lwir_simulator --trace`)
-- [x] Backend-facing legal/illegal golden fixtures across widths `4`, `8`, and `16`
-- [x] Verus specs and lemmas for key bundle/verifier legality properties
+- [x] Standalone `vliw_verify` CLI for static compiler-contract checks
+- [x] Deterministic trace mode for scheduler debugging (`vliw_simulator --trace`)
+- [x] Backend-facing legal/illegal golden fixtures across widths `4`, `8`,
+      and `16`
 - [x] Runtime, parser, verifier, and CLI tests with CI coverage artifacts
 
 ## Next steps
@@ -368,21 +465,22 @@ The project has moved past first simulator bring-up:
 The next useful work is to turn the simulator from a checked execution model
 into a compiler bring-up harness:
 
-1. **Synchronize the docs with the implementation.** Update
-   `docs/compiler_contract.md` so its enforcement table describes the current
-   static verifier instead of planned checks, including width dispatch,
-   conservative predicate handling, call-as-`r31` writer behavior, and the
-   distinction between static timing diagnostics and runtime stalls.
+1. **Generalize the MSI invariant to N CPUs.** The two-CPU proof in
+   `lemma_two_cpu_store_commit_preserves_msi_invariant` is intentionally
+   first-cut; generalizing to arbitrary `topology { cpus N }` is the next ADR.
 2. **Shrink the trusted verification surface.** Move more of `verify_program`
    and `LatencyTable::default` out of `external_body`, and add specs for the
-   GPR ready-cycle diagnostics so timing checks have a formal postcondition like
-   the slot and same-bundle hazard checks.
+   GPR ready-cycle diagnostics so timing checks have a formal postcondition
+   like the slot and same-bundle hazard checks.
 3. **Define ISA edge-case policy.** Decide and document behavior for
-   out-of-range memory, misaligned accesses, overflow, trap/exception reporting,
-   and the currently stubbed memory-ordering opcodes.
+   out-of-range memory, misaligned accesses, overflow, trap/exception
+   reporting, and FP/AES placeholder semantics.
 4. **Build compiler-debug presentation tools.** Add a bundle pretty-printer or
    disassembler, plus an `llvm-mca`-style throughput/stall summary after
    execution.
 5. **Exercise real scheduling kernels.** Add DAXPY, FIR, reductions, and small
    control-heavy kernels to validate software pipelining and predicate-heavy
-   schedules against both `lwir_verify` and the simulator.
+   schedules against both `vliw_verify` and the simulator.
+6. **Expose multi-CPU verification in a CLI.** `verify_system` runs the
+   cross-CPU polling-loop pass; today it has no `vliw_verify`-style entry
+   point.

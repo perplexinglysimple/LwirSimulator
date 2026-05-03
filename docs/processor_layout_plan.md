@@ -1,14 +1,36 @@
 # Processor Layout, Hardware Units, Cache, and Multi-CPU — Implementation Plan
 
-Status: **proposal / not yet started**.
-Target audience: contributors implementing the staged rollout below.
-Prerequisite reading: `docs/compiler_contract.md`, `docs/lwir_asm_format.md`, `README.md` § "Verification".
+Status: **stages 0–4D merged**. This document is preserved as the historical
+plan; current behavior is described in `README.md`, `docs/compiler_contract.md`,
+`docs/vliw_asm_format.md`, and `docs/adr/`. The staged breakdown lives in
+`docs/processor_layout_task_breakdown.md`.
+
+Where this plan and the implementation diverge, the implementation is
+authoritative. Notable deltas worth knowing about while reading the plan:
+
+- The `Fence` and `Cas` opcodes proposed in stage 4C were not added. Stage 4C
+  ships `AcqLoad` and `RelStore` only; software polling loops bounded by
+  `worst_case_visibility(layout)` replace fences and CAS. See ADR 0004 and
+  `src/verifier.rs::check_cross_cpu_ordering` for the rejection rule.
+- Stage 4B's bus arbitration is closed-form round-robin (`cycle % cpus`); the
+  arbiter has no internal state. Memory ops on cycles a CPU does not own are
+  *verifier-rejected programs*, not runtime stalls.
+- Stage 4D's `at_most_one_modified` invariant is proved at the cache-transition
+  level for two CPUs only. Generalizing to N CPUs is on the README's "next
+  steps" list.
+- `external_body` annotations were not eliminated as part of these stages.
+  `verify_program` / `verify_program_for_cpu` and `LatencyTable::default`
+  remain trusted; shrinking that surface is "next steps" work.
+
+Prerequisite reading for understanding the original design intent:
+`docs/compiler_contract.md`, `docs/vliw_asm_format.md`, `README.md`
+§ "Verus annotations".
 
 ## 0. Goals and non-goals
 
 ### Goals
 
-1. Replace the `.lwir` file header — which today is just a single `.width N` directive (`src/asm.rs:47`) — with a mandatory `.processor { ... }` block that declares:
+1. Replace the `.vliw` file header — which today is just a single `.width N` directive (`src/asm.rs:47`) — with a mandatory `.processor { ... }` block that declares:
    - bundle width,
    - a **processor layout** mapping slot positions to a *set of hardware units* installed on that slot (each unit advertises which opcode classes it handles),
    - the catalog of **hardware units** (built-in ones like `integer_alu`, `mem`, `ctrl`, `mul`; pluggable ones like `fp { variant fp64_fma }`, `aes { variant aes_ni }`),
@@ -20,11 +42,11 @@ Prerequisite reading: `docs/compiler_contract.md`, `docs/lwir_asm_format.md`, `R
 
 ### Explicit non-compatibility stance
 
-There is **no backwards compatibility** with the existing `.width N` syntax. As of stage 0, every `.lwir` file in the repo is mechanically migrated to the new header form in the same PR that lands the parser. Old-form files are rejected with a parse error pointing at this document. The compiler back-end and any external tooling are expected to update; the format is intentionally a hard cutover so we do not maintain two parsers, two spec families, or two trusted surfaces.
+There is **no backwards compatibility** with the existing `.width N` syntax. As of stage 0, every `.vliw` file in the repo is mechanically migrated to the new header form in the same PR that lands the parser. Old-form files are rejected with a parse error pointing at this document. The compiler back-end and any external tooling are expected to update; the format is intentionally a hard cutover so we do not maintain two parsers, two spec families, or two trusted surfaces.
 
 ### Non-goals (this plan only)
 
-- No new compiler back-end work; the compiler keeps emitting LWIR and we extend the simulator + verifier to *receive* layout-shaped output.
+- No new compiler back-end work; the compiler keeps emitting VLIW and we extend the simulator + verifier to *receive* layout-shaped output.
 - No micro-architectural pipeline modeling beyond what the cache/bus latency oracle requires (no branch predictor, no rename, no OoO). The simulator stays cycle-approximate.
 - No deviation from Verus + Z3 as the verification stack.
 
@@ -70,7 +92,7 @@ The center of gravity for stage 0 is **removing the const-generic `<const W: usi
 
 ### 2.1 Format
 
-The header is a **mandatory** `.processor { ... }` block at the top of every `.lwir` file. A file without it is a parse error; a file with the legacy `.width N` is a parse error with a hint pointing at this document. Body is a small declarative DSL parsed by the same hand-rolled lexer in `src/asm.rs`. Canonical example for stage 0 (cache/topology blocks are placeholders until stages 3/4 fill them):
+The header is a **mandatory** `.processor { ... }` block at the top of every `.vliw` file. A file without it is a parse error; a file with the legacy `.width N` is a parse error with a hint pointing at this document. Body is a small declarative DSL parsed by the same hand-rolled lexer in `src/asm.rs`. Canonical example for stage 0 (cache/topology blocks are placeholders until stages 3/4 fill them):
 
 ```text
 .processor {
@@ -99,7 +121,7 @@ The slot RHS is a **set of unit names**; the slot's accepted opcode-class set is
 
 Stage 0 ships only the four built-in units shown above (`integer_alu`, `memory`, `control`, `multiplier`). Stage 2 adds pluggable `fp` and `aes` units, which compose into slots the same way.
 
-There is no implicit "default VLIW" layout. Stage 0's PR contains a one-shot migration of every existing fixture (`examples/*.lwir`, `examples/fixtures/legal/*.lwir`, `examples/fixtures/illegal/*.lwir`) to the explicit form above — the four-unit composition reproduces today's `I, I, M, X` mapping exactly.
+There is no implicit "default VLIW" layout. Stage 0's PR contains a one-shot migration of every existing fixture (`examples/*.vliw`, `examples/fixtures/legal/*.vliw`, `examples/fixtures/illegal/*.vliw`) to the explicit form above — the four-unit composition reproduces today's `I, I, M, X` mapping exactly.
 
 ### 2.2 New module: `src/layout.rs`
 
@@ -159,7 +181,7 @@ Independent tasks, in roughly the order they should be tackled:
 - Replace `Bundle<const W: usize>` (`src/bundle.rs:20`) with runtime `Bundle { syllables: Vec<Syllable> }`. `Bundle::nop_bundle()` becomes `Bundle::nop_bundle(width: usize)`; `Bundle::width()` returns `syllables.len()`.
 - Replace `CpuState<const W: usize>` (`src/cpu/types.rs:21`) with runtime `CpuState { width: usize, ... }`. Constructor signature shifts from `CpuState::<W>::new(latencies)` to `CpuState::new(layout, latencies)` (or `CpuState::new(width, latencies)` if the layout is owned at the `System` level by stage 4 — defer that decision but pick one for stage 0 and keep it).
 - Add `pub struct Program { pub layout: ProcessorLayout, pub bundles: Vec<Bundle> }` in `src/lib.rs` or a new `src/program.rs`.
-- Drop the const-generic dispatch in `src/main.rs:79` and `src/bin/lwir_verify.rs:67` — both binaries take `&Program` directly.
+- Drop the const-generic dispatch in `src/main.rs:79` and `src/bin/vliw_verify.rs:67` — both binaries take `&Program` directly.
 - Rewrite `tests/smoke.rs` and `tests/verifier.rs` to construct runtime `Bundle`s and pass the canonical layout. There is no `parse_program_w` shim.
 
 ### 2.4 Parser changes
@@ -185,20 +207,20 @@ Independent tasks, in roughly the order they should be tackled:
 
 In the same PR:
 
-- Rewrite all existing files under `examples/` (`hello.lwir`, `clean_schedule.lwir`, `mul_latency.lwir`, `predication.lwir`, `illegal_raw_same_bundle.lwir`, `illegal_wrong_slot.lwir`) and `examples/fixtures/{legal,illegal}/*.lwir` to the new header form.
+- Rewrite all existing files under `examples/` (`hello.vliw`, `clean_schedule.vliw`, `mul_latency.vliw`, `predication.vliw`, `illegal_raw_same_bundle.vliw`, `illegal_wrong_slot.vliw`) and `examples/fixtures/{legal,illegal}/*.vliw` to the new header form.
 - Regenerate goldens. Diffs are reviewed by hand to confirm only the header changed (bundle bodies are untouched and trace output past the header is byte-identical).
 - Add new fixtures:
-  - `examples/fixtures/legal/w4_composed_slot.lwir` — slot 3 hosts both `ctrl` and `mul` (exercising composition).
-  - `examples/fixtures/illegal/w4_no_processor_header.lwir` — bare `.width 4`, must be rejected with a clear pointer to this doc.
-  - `examples/fixtures/illegal/w4_unknown_unit.lwir` — slot references a unit name not declared in `hardware { ... }`.
-  - `examples/fixtures/illegal/w4_layout_width_mismatch.lwir` — slot count ≠ `width`.
+  - `examples/fixtures/legal/w4_composed_slot.vliw` — slot 3 hosts both `ctrl` and `mul` (exercising composition).
+  - `examples/fixtures/illegal/w4_no_processor_header.vliw` — bare `.width 4`, must be rejected with a clear pointer to this doc.
+  - `examples/fixtures/illegal/w4_unknown_unit.vliw` — slot references a unit name not declared in `hardware { ... }`.
+  - `examples/fixtures/illegal/w4_layout_width_mismatch.vliw` — slot count ≠ `width`.
 
 ### 2.7 Acceptance criteria
 
 - `cargo verus verify` green.
 - `cargo test --all-targets` green including new fixtures.
-- `lwir_simulator --trace` over migrated goldens differs from old goldens **only** in the header echo line (or wherever the trace surfaces the layout); the cycle/event stream is byte-identical.
-- `lwir_simulator` and `lwir_verify` reject any input lacking the `.processor` block.
+- `vliw_simulator --trace` over migrated goldens differs from old goldens **only** in the header echo line (or wherever the trace surfaces the layout); the cycle/event stream is byte-identical.
+- `vliw_simulator` and `vliw_verify` reject any input lacking the `.processor` block.
 
 ---
 
@@ -324,10 +346,10 @@ Floating-point semantics are specced via `spec fn` *uninterpreted functions* (e.
 
 ### 4.6 Tests / fixtures
 
-- `examples/fixtures/legal/w4_fp_dot_product.lwir`: small DAXPY-style kernel using `fp64_fma`.
-- `examples/fixtures/legal/w4_fp_int_shared_slot.lwir`: a slot hosting `{ alu, fp0 }`, exercising mixed dispatch in adjacent bundles.
-- `examples/fixtures/legal/w4_aes_round.lwir`: one round of AES via the `aes_ni` unit.
-- `examples/fixtures/illegal/w4_fp_without_hw.lwir`: program using `fadd` against a header that omits the FP unit; verifier must reject with `MissingHardwareUnit`.
+- `examples/fixtures/legal/w4_fp_dot_product.vliw`: small DAXPY-style kernel using `fp64_fma`.
+- `examples/fixtures/legal/w4_fp_int_shared_slot.vliw`: a slot hosting `{ alu, fp0 }`, exercising mixed dispatch in adjacent bundles.
+- `examples/fixtures/legal/w4_aes_round.vliw`: one round of AES via the `aes_ni` unit.
+- `examples/fixtures/illegal/w4_fp_without_hw.vliw`: program using `fadd` against a header that omits the FP unit; verifier must reject with `MissingHardwareUnit`.
 
 ### 4.7 No new trusted surface
 
@@ -403,8 +425,8 @@ What is genuinely cumulative across stages 0→3 is the **proof structure**, not
 
 ### 5.5 Tests / fixtures
 
-- `examples/fixtures/legal/w4_cache_hit_streak.lwir`: warm-cache streaming load, asserts trace shows `hit_latency` after the first miss.
-- `examples/fixtures/legal/w4_cache_dirty_eviction.lwir`: store, evict-by-mismatched-tag, load, assert `miss_latency` plus eviction cost.
+- `examples/fixtures/legal/w4_cache_hit_streak.vliw`: warm-cache streaming load, asserts trace shows `hit_latency` after the first miss.
+- `examples/fixtures/legal/w4_cache_dirty_eviction.vliw`: store, evict-by-mismatched-tag, load, assert `miss_latency` plus eviction cost.
 - A trace-format extension: each `MemoryEffect` in `src/cpu/trace.rs` gains a `cache_outcome: { Hit, Miss, MissDirty }` field. Goldens regenerate.
 
 ---
@@ -485,7 +507,7 @@ Acceptance: at most one cache holds a line in Modified at any cycle (proven, not
 ### 6.5 Trace and tooling (touches 4A and 4D)
 
 - `TraceLog` (`src/cpu/trace.rs`) gains a `per_cpu: Vec<TraceEvent>` per global cycle (4A).
-- `lwir_simulator --trace` accepts `--cpu N` to filter, defaulting to interleaved per-cycle output for human reading (4A).
+- `vliw_simulator --trace` accepts `--cpu N` to filter, defaulting to interleaved per-cycle output for human reading (4A).
 - Golden fixture "two CPUs incrementing a shared counter via CAS" lands in 4C; an MSI-coherence-stress fixture lands in 4D.
 
 ### 6.6 Risk

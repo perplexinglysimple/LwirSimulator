@@ -1,6 +1,6 @@
-/// VLIW bundle: W syllables packed together and issued in a single cycle.
+/// VLIW bundle: runtime-width syllables packed together and issued in a single cycle.
 ///
-/// W must be a power of two in [4, 256].  The constraint is enforced at
+/// Width must be a power of two in [4, 256].  The constraint is enforced at
 /// construction time so that downstream code can rely on it.
 use crate::isa::{Opcode, Syllable};
 use builtin::*;
@@ -13,37 +13,35 @@ pub open spec fn is_valid_width(w: usize) -> bool {
     w == 4 || w == 8 || w == 16 || w == 32 || w == 64 || w == 128 || w == 256
 }
 
-/// A bundle of W syllables.
-///
-/// The generic parameter W is checked at runtime via `Bundle::new`.
+/// A bundle of runtime-width syllables.
 #[derive(Clone, Debug)]
-pub struct Bundle<const W: usize> {
+pub struct Bundle {
     pub syllables: Vec<Syllable>,
 }
 
-impl<const W: usize> Bundle<W> {
+impl Bundle {
     /// Create a fully-NOP bundle.
     ///
-    /// Precondition: W is a valid bundle width (power-of-2 in [4..=256]).
+    /// Precondition: width is a valid bundle width (power-of-2 in [4..=256]).
     /// Postconditions:
-    ///   - exactly W syllables
+    ///   - exactly `width` syllables
     ///   - every syllable has opcode Nop and predicate 0
-    pub fn nop_bundle() -> (ret: Self)
-        requires is_valid_width(W as usize),
+    pub fn nop_bundle(width: usize) -> (ret: Self)
+        requires is_valid_width(width),
         ensures
-            ret.syllables.len() == W,
-            forall|i: int| 0 <= i < W ==> ret.syllables[i].opcode == Opcode::Nop,
-            forall|i: int| 0 <= i < W ==> ret.syllables[i].predicate == 0usize,
+            ret.syllables.len() == width,
+            forall|i: int| 0 <= i < width ==> ret.syllables[i].opcode == Opcode::Nop,
+            forall|i: int| 0 <= i < width ==> ret.syllables[i].predicate == 0usize,
     {
         let mut syllables: Vec<Syllable> = Vec::new();
         let mut i = 0usize;
-        while i < W
+        while i < width
             invariant
-                i <= W,
+                i <= width,
                 syllables.len() == i,
                 forall|j: int| 0 <= j < i ==> syllables[j].opcode == Opcode::Nop,
                 forall|j: int| 0 <= j < i ==> syllables[j].predicate == 0usize,
-            decreases W - i,
+            decreases width - i,
         {
             syllables.push(Syllable::nop());
             i += 1;
@@ -73,11 +71,11 @@ impl<const W: usize> Bundle<W> {
         self.syllables.set(slot, syl);
     }
 
-    /// Bundle width (always W).
+    /// Bundle width.
     pub fn width(&self) -> (ret: usize)
-        ensures ret == W,
+        ensures ret == self.syllables.len(),
     {
-        W
+        self.syllables.len()
     }
 
     /// True iff every syllable has opcode Nop.

@@ -1,0 +1,41 @@
+.processor {
+  width 4
+
+  hardware {
+    unit alu = integer_alu
+    unit mem = memory
+    unit ctrl = control
+    unit mul = multiplier
+  }
+
+  layout slots {
+    0 = { alu }
+    1 = { alu }
+    2 = { mem }
+    3 = { ctrl, mul }
+  }
+
+  cache { }
+  topology { cpus 1 }
+}
+
+{
+  i0: movi r1, 0xff
+  i1: nop
+  m : nop
+  x : nop
+}
+
+{
+  i0: nop
+  i1: nop
+  m : relstore r0, r1, 0
+  x : nop
+}
+
+{
+  i0: nop
+  i1: nop
+  m : acqload r2, r0, 0
+  x : ret
+}
