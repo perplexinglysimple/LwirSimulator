@@ -25,7 +25,7 @@ is hard-coded into the simulator.
 
 | Property | Value |
 |---|---|
-| **Bundle width W** | Runtime, power-of-2 in **[4 … 256]**, declared by `.processor { width N }` |
+| **Bundle width W** | Runtime, integer in **[1 … 256]**, declared by `.processor { width N }` |
 | **Slot composition** | Per-slot set of hardware units, declared in `layout slots { ... }` |
 | **Built-in unit kinds** | `integer_alu`, `memory`, `control`, `multiplier`, `fp { variant ... }`, `aes { variant aes_ni }` |
 | **GPRs** | 32 × 64-bit by default (`r0` = 0 hardwired); configurable via `arch { gprs N }` |
@@ -434,7 +434,7 @@ tests/
 Verus `spec` and `proof` constructs encode core architectural properties and
 connect executable checks to conservative specs:
 
-- `is_valid_width(W)` — bundle width is a power-of-two in [4, 256]
+- `is_valid_width(W)` — bundle width is an integer in [1, 256]
 - Loop invariants in `Bundle::nop_bundle` (length grows monotonically)
 - Pre-conditions on `Bundle::set_slot` (slot index in range)
 - CPU well-formedness facts for register, predicate, memory, scoreboard, and
@@ -457,34 +457,6 @@ surface is executable code marked `#[verifier::external_body]` —
 `verify_program` / `verify_program_for_cpu` and `LatencyTable::default`.
 
 ---
-
-## Current status
-
-Stages 0 through 4D of `docs/processor_layout_plan.md` are merged:
-
-- [x] Runtime-width data model with mandatory `.processor { ... }` header
-      (Stage 0)
-- [x] Layout-driven slot legality and dispatch; canonical `I, I, M, X` layout
-      preserved as one concrete layout (Stage 1)
-- [x] Composable hardware units: FP variants and AES alongside the integer /
-      memory / control / multiplier built-ins (Stage 2)
-- [x] Direct-mapped L1D cache with hit / miss / dirty-eviction latencies, used
-      by the runtime *and* the verifier's worst-case load bound (Stage 3)
-- [x] System shell and shared memory with multiple `CpuState`s under one
-      global cycle (Stage 4A)
-- [x] Deterministic round-robin bus arbitration with `bus-slot-conflict`
-      verifier diagnostic (Stage 4B)
-- [x] `acqload` / `relstore` ordering opcodes and a cross-CPU pass that
-      rejects unbounded polling loops (Stage 4C)
-- [x] MSI cache coherence with the two-CPU `at_most_one_modified` invariant
-      proved at the cache-transition level; coherence drain folded into the
-      verifier's worst-case visibility bound (Stage 4D, ADR 0004)
-- [x] Stable bundle-level text assembly format with examples
-- [x] Standalone `vliw_verify` CLI for static compiler-contract checks
-- [x] Deterministic trace mode for scheduler debugging (`vliw_simulator --trace`)
-- [x] Backend-facing legal/illegal golden fixtures across widths `4`, `8`,
-      and `16`
-- [x] Runtime, parser, verifier, and CLI tests with CI coverage artifacts
 
 ## Next steps
 

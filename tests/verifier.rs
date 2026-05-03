@@ -765,6 +765,44 @@ fn verifier_binary_accepts_width_8_program() {
 }
 
 #[test]
+fn verifier_binary_accepts_small_widths() {
+    for fixture in [
+        ("examples/fixtures/legal/w1_single_slot.vliw", "W=1"),
+        ("examples/fixtures/legal/w2_dual_slot.vliw", "W=2"),
+        ("examples/fixtures/legal/w3_triple_slot.vliw", "W=3"),
+    ] {
+        let (path, banner) = fixture;
+        let out = std::process::Command::new(env!("CARGO_BIN_EXE_vliw_verify"))
+            .arg(path)
+            .output()
+            .expect("binary should run");
+
+        assert!(
+            out.status.success(),
+            "{path}: stdout: {}",
+            String::from_utf8_lossy(&out.stdout)
+        );
+        let stdout = String::from_utf8(out.stdout).unwrap();
+        assert!(stdout.contains(banner), "{path}: {stdout}");
+        assert!(stdout.contains("CLEAN"), "{path}: {stdout}");
+    }
+}
+
+#[test]
+fn verifier_accepts_non_power_of_two_widths_via_canonical_layout() {
+    // canonical_layout used to be restricted to powers of two; widths 1..=256
+    // are now valid and the verifier should accept a NOP-only program at any
+    // such width.
+    for width in [1usize, 2, 3, 5, 7, 13, 17, 100, 255, 256] {
+        let layout = canonical_layout(width);
+        assert!(layout.validate(), "layout invalid for width {width}");
+        let program = vec![Bundle::nop_bundle(width)];
+        let diags = verify_program(&layout, &program, &LatencyTable::default());
+        assert!(diags.is_empty(), "width {width}: {diags:?}");
+    }
+}
+
+#[test]
 fn verifier_binary_exits_one_on_illegal_slot() {
     let out = std::process::Command::new(env!("CARGO_BIN_EXE_vliw_verify"))
         .arg("examples/illegal_wrong_slot.vliw")

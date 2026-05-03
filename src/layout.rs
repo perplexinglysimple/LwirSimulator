@@ -305,7 +305,7 @@ pub fn unit_kind_default_latency_runtime(kind: UnitKind) -> (ret: u32)
 pub fn is_valid_width_runtime(width: usize) -> (ret: bool)
     ensures ret == crate::bundle::is_valid_width(width),
 {
-    width == 4 || width == 8 || width == 16 || width == 32 || width == 64 || width == 128 || width == 256
+    1 <= width && width <= 256
 }
 
 pub open spec fn unit_name_exists(layout: &ProcessorLayout, name: Seq<char>) -> bool {

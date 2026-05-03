@@ -447,6 +447,34 @@ fn processor_arch_config_sizes_cpu_state() {
 }
 
 #[test]
+fn small_width_fixtures_run_to_halt() {
+    for path in [
+        "examples/fixtures/legal/w1_single_slot.vliw",
+        "examples/fixtures/legal/w2_dual_slot.vliw",
+        "examples/fixtures/legal/w3_triple_slot.vliw",
+    ] {
+        let source = std::fs::read_to_string(path).expect("fixture exists");
+        let program = parse_program(&source).expect("fixture parses");
+        let mut cpu = CpuState::new_for_layout(&program.layout, LatencyTable::default());
+        while cpu.step(&program.layout, &program.bundles) {}
+
+        assert!(cpu.halted, "{path}: cpu did not halt");
+        assert_eq!(cpu.read_gpr(1), 6, "{path}: r1");
+        assert_eq!(cpu.read_gpr(2), 7, "{path}: r2");
+        assert_eq!(cpu.read_gpr(3), 13, "{path}: r3 = r1 + r2");
+    }
+}
+
+#[test]
+fn nop_bundle_supports_non_power_of_two_widths() {
+    for width in [1usize, 2, 3, 5, 7, 13, 17, 100, 255, 256] {
+        let bundle = Bundle::nop_bundle(width);
+        assert_eq!(bundle.syllables.len(), width);
+        assert!(bundle.is_all_nop());
+    }
+}
+
+#[test]
 fn illegal_bundle_wrong_slot_halts_before_execution() {
     let mut cpu = CpuState::new(W, LatencyTable::default());
 

@@ -1,7 +1,7 @@
 /// VLIW bundle: runtime-width syllables packed together and issued in a single cycle.
 ///
-/// Width must be a power of two in [4, 256].  The constraint is enforced at
-/// construction time so that downstream code can rely on it.
+/// Width must be in [1, 256].  The constraint is enforced at construction time
+/// so that downstream code can rely on it.
 use crate::isa::{Opcode, Syllable};
 use builtin::*;
 use builtin_macros::*;
@@ -10,7 +10,7 @@ use vstd::prelude::*;
 verus! {
 
 pub open spec fn is_valid_width(w: usize) -> bool {
-    w == 4 || w == 8 || w == 16 || w == 32 || w == 64 || w == 128 || w == 256
+    1 <= w && w <= 256
 }
 
 /// A bundle of runtime-width syllables.
@@ -22,7 +22,7 @@ pub struct Bundle {
 impl Bundle {
     /// Create a fully-NOP bundle.
     ///
-    /// Precondition: width is a valid bundle width (power-of-2 in [4..=256]).
+    /// Precondition: width is a valid bundle width (in [1..=256]).
     /// Postconditions:
     ///   - exactly `width` syllables
     ///   - every syllable has opcode Nop and predicate 0

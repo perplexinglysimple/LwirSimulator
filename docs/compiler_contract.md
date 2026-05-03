@@ -22,11 +22,11 @@ multi-CPU `verifier::verify_system` entry point.
 
 ### 1) Bundle width is valid
 
-The emitted program must target a valid bundle width from this set:
+The emitted program must target a valid bundle width:
 
-- `4, 8, 16, 32, 64, 128, 256`
+- any integer in `1 ..= 256`
 
-**Why:** simulator data structures and issuance rules assume these widths.
+**Why:** simulator data structures and issuance rules assume widths in this range.
 
 **Enforcement mapping:**
 - `.processor { width N }` is required and must use a supported value.
