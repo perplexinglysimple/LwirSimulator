@@ -1023,6 +1023,105 @@ fn main_binary_trace_mode_emits_stable_log() {
 }
 
 #[test]
+fn main_binary_json_mode_emits_machine_readable_final_state() {
+    let output = std::process::Command::new(env!("CARGO_BIN_EXE_vliw_simulator"))
+        .arg("--json")
+        .arg("examples/hello.vliw")
+        .output()
+        .expect("binary should run");
+
+    assert!(output.status.success());
+
+    let stdout = String::from_utf8(output.stdout).expect("stdout should be utf8");
+    assert!(stdout.starts_with("{\n"), "{stdout}");
+    assert!(
+        stdout.contains("\"format\": \"vliw-sim-final-state-v1\""),
+        "{stdout}"
+    );
+    assert!(stdout.contains("\"halted\": true"), "{stdout}");
+    assert!(stdout.contains("\"pc\": 5"), "{stdout}");
+    assert!(stdout.contains("\"r0\": 0"), "{stdout}");
+    assert!(stdout.contains("\"r1\": 6"), "{stdout}");
+    assert!(stdout.contains("\"p0\": true"), "{stdout}");
+    assert!(stdout.contains("\"p1\": false"), "{stdout}");
+    assert!(
+        stdout.contains(
+            "{ \"addr\": 256, \"width\": 8, \"value\": 42, \"in_bounds\": true, \"cache\": \"miss\" }"
+        ),
+        "{stdout}"
+    );
+}
+
+#[test]
+fn main_binary_trace_json_alias_matches_json_mode() {
+    let json = std::process::Command::new(env!("CARGO_BIN_EXE_vliw_simulator"))
+        .arg("--json")
+        .arg("examples/hello.vliw")
+        .output()
+        .expect("binary should run");
+    let trace_json = std::process::Command::new(env!("CARGO_BIN_EXE_vliw_simulator"))
+        .arg("--trace=json")
+        .arg("examples/hello.vliw")
+        .output()
+        .expect("binary should run");
+
+    assert!(json.status.success());
+    assert!(trace_json.status.success());
+    assert_eq!(json.stdout, trace_json.stdout);
+}
+
+#[test]
+fn main_binary_dump_queries_emit_zero_registers_and_memory() {
+    let output = std::process::Command::new(env!("CARGO_BIN_EXE_vliw_simulator"))
+        .arg("--dump-reg")
+        .arg("r4")
+        .arg("--dump-reg")
+        .arg("r3")
+        .arg("--dump-mem")
+        .arg("0x100:4")
+        .arg("examples/hello.vliw")
+        .output()
+        .expect("binary should run");
+
+    assert!(output.status.success());
+
+    let stdout = String::from_utf8(output.stdout).expect("stdout should be utf8");
+    assert!(
+        stdout.contains("reg r4 value=0x0000000000000000 (0)"),
+        "{stdout}"
+    );
+    assert!(
+        stdout.contains("reg r3 value=0x000000000000002a (42)"),
+        "{stdout}"
+    );
+    assert!(
+        stdout.contains("mem addr=0x00000100 width=4 value=0x0000002a (42) in_bounds=true"),
+        "{stdout}"
+    );
+}
+
+#[test]
+fn main_binary_dump_all_regs_includes_zero_values() {
+    let output = std::process::Command::new(env!("CARGO_BIN_EXE_vliw_simulator"))
+        .arg("--dump-all-regs")
+        .arg("examples/hello.vliw")
+        .output()
+        .expect("binary should run");
+
+    assert!(output.status.success());
+
+    let stdout = String::from_utf8(output.stdout).expect("stdout should be utf8");
+    assert!(
+        stdout.contains("reg r0 value=0x0000000000000000 (0)"),
+        "{stdout}"
+    );
+    assert!(
+        stdout.contains("reg r31 value=0x0000000000000000 (0)"),
+        "{stdout}"
+    );
+}
+
+#[test]
 fn bundle_helpers_preserve_expected_structure() {
     let mut bundle = Bundle::nop_bundle(W);
 

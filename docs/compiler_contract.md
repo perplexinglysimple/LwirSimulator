@@ -17,6 +17,13 @@ multi-CPU `verifier::verify_system` entry point.
   units can execute. The historical `I, I, M, X` four-slot pattern is one
   concrete layout, not a hard rule. See `docs/vliw_asm_format.md` and
   `docs/processor_layout_plan.md`.
+- Compiler harnesses should prefer `vliw_simulator --json <program.vliw>` for
+  result assertions. Human final-state output intentionally omits zero-valued
+  registers, while JSON includes all architectural GPRs and predicates. The
+  current JSON schema identifies itself as `vliw-sim-final-state-v1`.
+- For smaller assertions, harnesses may use line-oriented query dumps:
+  `--dump-reg rN`, `--dump-mem addr:width`, and `--dump-all-regs`.
+  `--dump-reg` and `--dump-all-regs` print zero-valued registers explicitly.
 
 ## Required compiler guarantees
 

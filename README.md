@@ -181,6 +181,33 @@ non-`nop` syllables, stalls, GPR writes, predicate writes, memory effects
 (including cache outcome), and branch/jump/call/return decisions, followed by a
 final `pc/cycle/halted` line.
 
+### JSON final state
+
+Use `--json` to emit a machine-readable final architectural state:
+
+```sh
+cargo run --bin vliw_simulator -- --json examples/hello.vliw
+```
+
+`--trace=json` is accepted as an alias. The JSON output uses
+`"format": "vliw-sim-final-state-v1"` and includes `halted`, `pc`, `cycle`, all
+GPRs including zero-valued registers, all predicates including false
+predicates, and a `memory_writes` array for executed stores.
+
+### Query dumps
+
+Use `--dump-reg`, `--dump-mem`, or `--dump-all-regs` for line-oriented final
+state queries:
+
+```sh
+cargo run --bin vliw_simulator -- --dump-reg r1 --dump-mem 0x100:4 examples/hello.vliw
+```
+
+Register dumps print the requested value even when it is zero. Memory dumps use
+`addr:width`, where `addr` may be decimal or hex and `width` is 1, 2, 4, or 8
+bytes. Dump output is intended for simple compiler-harness assertions without
+parsing the execution trace.
+
 ### Text assembly format
 
 `vliw_simulator` consumes the stable bundle-level text format documented in
