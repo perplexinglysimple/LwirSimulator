@@ -83,7 +83,9 @@ done: x ret
 ```
 
 Rules:
-- Label syntax: `[A-Za-z_][A-Za-z0-9_]*`.
+- Label syntax: `[A-Za-z_.$][A-Za-z0-9_.$]*`.
+- Label references are accepted for control targets (`br`/`branch`,
+  `jmp`/`jump`, and `call`); numeric bundle targets are also accepted.
 - Duplicate labels are illegal.
 - Unknown label references are illegal.
 

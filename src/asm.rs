@@ -640,7 +640,7 @@ fn normalize_block_instruction_line(line: &str, line_no: usize) -> Result<String
 fn split_label_prefix(line: &str) -> Option<(String, &str)> {
     let colon = line.find(':')?;
     let label = line[..colon].trim();
-    if !is_identifier(label) {
+    if !is_label_name(label) {
         return None;
     }
     Some((label.to_string(), &line[colon + 1..]))
@@ -655,6 +655,17 @@ fn is_identifier(token: &str) -> bool {
         return false;
     }
     chars.all(|ch| ch.is_ascii_alphanumeric() || ch == '_')
+}
+
+fn is_label_name(token: &str) -> bool {
+    let mut chars = token.chars();
+    let Some(first) = chars.next() else {
+        return false;
+    };
+    if !(first.is_ascii_alphabetic() || first == '_' || first == '.' || first == '$') {
+        return false;
+    }
+    chars.all(|ch| ch.is_ascii_alphanumeric() || ch == '_' || ch == '.' || ch == '$')
 }
 
 fn resolve_labels(
@@ -708,14 +719,26 @@ fn resolve_token(
 }
 
 fn looks_like_label_ref(piece: &str, slot_aliases: &SlotAliases) -> bool {
-    is_identifier(piece)
+    is_label_name(piece)
         && !slot_aliases.contains_key(&piece.to_ascii_lowercase())
-        && !piece.starts_with('r')
-        && !piece.starts_with('p')
+        && !is_gpr_token(piece)
+        && !is_pred_token(piece)
         && !piece.starts_with('[')
         && !is_reserved_token(piece)
         && parse_i64(piece).is_err()
         && piece != "!"
+}
+
+fn is_gpr_token(token: &str) -> bool {
+    token
+        .strip_prefix('r')
+        .is_some_and(|rest| !rest.is_empty() && rest.chars().all(|ch| ch.is_ascii_digit()))
+}
+
+fn is_pred_token(token: &str) -> bool {
+    token
+        .strip_prefix('p')
+        .is_some_and(|rest| !rest.is_empty() && rest.chars().all(|ch| ch.is_ascii_digit()))
 }
 
 fn is_reserved_token(token: &str) -> bool {
@@ -861,7 +884,8 @@ fn parse_branch(slot: usize, args: &[&str], line_no: usize) -> Result<(usize, Sy
         return Err(format!("line {line_no}: branch expects `<pred> <target>`"));
     }
     let (predicate, pred_negated) = parse_pred_ref(args[0], line_no)?;
-    let target = parse_i64(args[1]).map_err(|e| format!("line {line_no}: {e}"))?;
+    let target = parse_i64(args[1])
+        .map_err(|_| format!("line {line_no}: invalid branch target `{}`", args[1]))?;
     Ok((
         slot,
         Syllable {
@@ -944,7 +968,14 @@ fn parse_non_branch(opcode: Opcode, args: &[&str], line_no: usize) -> Result<Syl
         }
         Opcode::Jump | Opcode::Call => {
             expect_arity(args, 1, line_no, opcode)?;
-            syllable.imm = parse_i64(args[0]).map_err(|e| format!("line {line_no}: {e}"))?;
+            let target_kind = if opcode == Opcode::Jump {
+                "jump"
+            } else {
+                "call"
+            };
+            syllable.imm = parse_i64(args[0]).map_err(|_| {
+                format!("line {line_no}: invalid {target_kind} target `{}`", args[0])
+            })?;
         }
         Opcode::Ret | Opcode::Nop => {
             expect_arity(args, 0, line_no, opcode)?;
@@ -1247,6 +1278,64 @@ done:  x ret
         let source = format!("{}{}", processor_header(W), "start: x jump missing_label");
         let err = parse_program(&source).expect_err("program should fail");
         assert!(err.contains("unknown label"));
+    }
+
+    #[test]
+    fn resolves_llvm_style_control_target_labels() {
+        let source = format!(
+            "{}{}",
+            processor_header(W),
+            r#"
+entry:      x br p1, if.then
+if.then:   x jmp common.ret
+if.else$:  x call common.ret
+common.ret: x ret
+"#
+        );
+
+        let program = parse_program(&source).expect("program should parse");
+
+        assert_eq!(program.bundles[0].syllables[3].opcode, Opcode::Branch);
+        assert_eq!(program.bundles[0].syllables[3].imm, 1);
+        assert_eq!(program.bundles[1].syllables[3].opcode, Opcode::Jump);
+        assert_eq!(program.bundles[1].syllables[3].imm, 3);
+        assert_eq!(program.bundles[2].syllables[3].opcode, Opcode::Call);
+        assert_eq!(program.bundles[2].syllables[3].imm, 3);
+    }
+
+    #[test]
+    fn keeps_numeric_control_targets() {
+        let source = format!(
+            "{}{}",
+            processor_header(W),
+            r#"
+entry: x br p1, 2
+       x jmp 3
+       x call 0
+done:  x ret
+"#
+        );
+
+        let program = parse_program(&source).expect("program should parse");
+
+        assert_eq!(program.bundles[0].syllables[3].imm, 2);
+        assert_eq!(program.bundles[1].syllables[3].imm, 3);
+        assert_eq!(program.bundles[2].syllables[3].imm, 0);
+    }
+
+    #[test]
+    fn rejects_unknown_llvm_style_branch_label() {
+        let source = format!("{}{}", processor_header(W), "entry: x br p1, if.then");
+        let err = parse_program(&source).expect_err("program should fail");
+        assert!(err.contains("unknown label `if.then`"), "{err}");
+    }
+
+    #[test]
+    fn reports_invalid_control_targets_as_targets() {
+        let source = format!("{}{}", processor_header(W), "entry: x br p1, if-then");
+        let err = parse_program(&source).expect_err("program should fail");
+        assert!(err.contains("invalid branch target `if-then`"), "{err}");
+        assert!(!err.contains("invalid immediate"), "{err}");
     }
 
     #[test]
