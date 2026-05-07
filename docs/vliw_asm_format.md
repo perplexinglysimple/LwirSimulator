@@ -157,6 +157,8 @@ Store-like forms (`store*`):
 The parser accepts canonical mnemonics and aliases.
 
 Examples:
+- `addi`, `addimm`, `add_imm`
+- `subi`, `subimm`, `sub_imm`
 - `movi`, `movimm`, `mov_imm`
 - `ldd` / `load_d`
 - `std` / `store_d`
@@ -164,8 +166,15 @@ Examples:
 - `jmp` / `jump`
 - `acqload` (acquire-ordered 8-byte load), `relstore` (release-ordered
   8-byte store)
-- `fpadd32`, `fpmul32`, `fpadd64`, `fpmul64` (placeholder FP semantics; require
-  a slot with an `fp { variant ... }` unit)
+- `fpadd32`, `fpsub32`, `fpmul32`, `fpdiv32`, `fpadd64`, `fpsub64`,
+  `fpmul64`, `fpdiv64` (placeholder FP arithmetic; require a slot with an
+  `fp { variant ... }` unit)
+- `fpcmp32`, `fpcmp64` (placeholder equality compare to a predicate register)
+- `fpcvt32to64`, `fpcvt64to32` (placeholder width conversion)
+- `fpcvti32to32`, `fpcvti64to64` (placeholder signed integer to FP conversion)
+- `fpcvt32toi32`, `fpcvt64toi64` (placeholder FP to signed integer conversion)
+- `fsub*`, `fdiv*`, `fcmp*`, and `fcvt*` are accepted aliases for the
+  corresponding `fp...` spellings above.
 - `aesenc`, `aesdec` (placeholder AES round; require a slot with an
   `aes { variant aes_ni }` unit)
 

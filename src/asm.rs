@@ -777,7 +777,13 @@ fn is_reserved_token(token: &str) -> bool {
             | "m"
             | "x"
             | "add"
+            | "addi"
+            | "add_imm"
+            | "addimm"
             | "sub"
+            | "subi"
+            | "sub_imm"
+            | "subimm"
             | "and"
             | "or"
             | "xor"
@@ -839,12 +845,50 @@ fn is_reserved_token(token: &str) -> bool {
             | "p_not"
             | "fpadd32"
             | "fp_add32"
+            | "fpsub32"
+            | "fp_sub32"
+            | "fsub32"
             | "fpmul32"
             | "fp_mul32"
+            | "fpdiv32"
+            | "fp_div32"
+            | "fdiv32"
+            | "fpcmp32"
+            | "fp_cmp32"
+            | "fcmp32"
+            | "fpcvt32to64"
+            | "fp_cvt32to64"
+            | "fp_cvt_32_to_64"
+            | "fcvt32to64"
+            | "fpcvti32to32"
+            | "fp_cvti32to32"
+            | "fcvti32f32"
+            | "fpcvt32toi32"
+            | "fp_cvt32toi32"
+            | "fcvtf32i32"
             | "fpadd64"
             | "fp_add64"
+            | "fpsub64"
+            | "fp_sub64"
+            | "fsub64"
             | "fpmul64"
             | "fp_mul64"
+            | "fpdiv64"
+            | "fp_div64"
+            | "fdiv64"
+            | "fpcmp64"
+            | "fp_cmp64"
+            | "fcmp64"
+            | "fpcvt64to32"
+            | "fp_cvt64to32"
+            | "fp_cvt_64_to_32"
+            | "fcvt64to32"
+            | "fpcvti64to64"
+            | "fp_cvti64to64"
+            | "fcvti64f64"
+            | "fpcvt64toi64"
+            | "fp_cvt64toi64"
+            | "fcvtf64i64"
             | "aesenc"
             | "aes_enc"
             | "aesdec"
@@ -944,9 +988,13 @@ fn parse_non_branch(opcode: Opcode, args: &[&str], line_no: usize) -> Result<Syl
         | Opcode::Mul
         | Opcode::MulH
         | Opcode::FpAdd32
+        | Opcode::FpSub32
         | Opcode::FpMul32
+        | Opcode::FpDiv32
         | Opcode::FpAdd64
+        | Opcode::FpSub64
         | Opcode::FpMul64
+        | Opcode::FpDiv64
         | Opcode::AesEnc
         | Opcode::AesDec => {
             expect_arity(args, 3, line_no, opcode)?;
@@ -955,6 +1003,12 @@ fn parse_non_branch(opcode: Opcode, args: &[&str], line_no: usize) -> Result<Syl
                 Some(parse_gpr(args[1], line_no)?),
                 Some(parse_gpr(args[2], line_no)?),
             ];
+        }
+        Opcode::AddImm | Opcode::SubImm => {
+            expect_arity(args, 3, line_no, opcode)?;
+            syllable.dst = Some(parse_gpr(args[0], line_no)?);
+            syllable.src = [Some(parse_gpr(args[1], line_no)?), None];
+            syllable.imm = parse_i64(args[2]).map_err(|e| format!("line {line_no}: {e}"))?;
         }
         Opcode::Mov => {
             expect_arity(args, 2, line_no, opcode)?;
@@ -973,6 +1027,24 @@ fn parse_non_branch(opcode: Opcode, args: &[&str], line_no: usize) -> Result<Syl
                 Some(parse_gpr(args[1], line_no)?),
                 Some(parse_gpr(args[2], line_no)?),
             ];
+        }
+        Opcode::FpCmp32 | Opcode::FpCmp64 => {
+            expect_arity(args, 3, line_no, opcode)?;
+            syllable.dst = Some(parse_pred(args[0], line_no)?);
+            syllable.src = [
+                Some(parse_gpr(args[1], line_no)?),
+                Some(parse_gpr(args[2], line_no)?),
+            ];
+        }
+        Opcode::FpCvt32To64
+        | Opcode::FpCvtI32ToFp32
+        | Opcode::FpCvtFp32ToI32
+        | Opcode::FpCvt64To32
+        | Opcode::FpCvtI64ToFp64
+        | Opcode::FpCvtFp64ToI64 => {
+            expect_arity(args, 2, line_no, opcode)?;
+            syllable.dst = Some(parse_gpr(args[0], line_no)?);
+            syllable.src = [Some(parse_gpr(args[1], line_no)?), None];
         }
         Opcode::LoadB
         | Opcode::LoadH
@@ -1073,7 +1145,9 @@ fn parse_opcode(token: &str, line_no: usize) -> Result<Opcode, String> {
     let normalized = token.to_ascii_lowercase();
     let opcode = match normalized.as_str() {
         "add" => Opcode::Add,
+        "addi" | "add_imm" | "addimm" => Opcode::AddImm,
         "sub" => Opcode::Sub,
+        "subi" | "sub_imm" | "subimm" => Opcode::SubImm,
         "and" => Opcode::And,
         "or" => Opcode::Or,
         "xor" => Opcode::Xor,
@@ -1106,9 +1180,21 @@ fn parse_opcode(token: &str, line_no: usize) -> Result<Opcode, String> {
         "pxor" | "p_xor" => Opcode::PXor,
         "pnot" | "p_not" => Opcode::PNot,
         "fpadd32" | "fp_add32" => Opcode::FpAdd32,
+        "fpsub32" | "fp_sub32" | "fsub32" => Opcode::FpSub32,
         "fpmul32" | "fp_mul32" => Opcode::FpMul32,
+        "fpdiv32" | "fp_div32" | "fdiv32" => Opcode::FpDiv32,
+        "fpcmp32" | "fp_cmp32" | "fcmp32" => Opcode::FpCmp32,
+        "fpcvt32to64" | "fp_cvt32to64" | "fp_cvt_32_to_64" | "fcvt32to64" => Opcode::FpCvt32To64,
+        "fpcvti32to32" | "fp_cvti32to32" | "fcvti32f32" => Opcode::FpCvtI32ToFp32,
+        "fpcvt32toi32" | "fp_cvt32toi32" | "fcvtf32i32" => Opcode::FpCvtFp32ToI32,
         "fpadd64" | "fp_add64" => Opcode::FpAdd64,
+        "fpsub64" | "fp_sub64" | "fsub64" => Opcode::FpSub64,
         "fpmul64" | "fp_mul64" => Opcode::FpMul64,
+        "fpdiv64" | "fp_div64" | "fdiv64" => Opcode::FpDiv64,
+        "fpcmp64" | "fp_cmp64" | "fcmp64" => Opcode::FpCmp64,
+        "fpcvt64to32" | "fp_cvt64to32" | "fp_cvt_64_to_32" | "fcvt64to32" => Opcode::FpCvt64To32,
+        "fpcvti64to64" | "fp_cvti64to64" | "fcvti64f64" => Opcode::FpCvtI64ToFp64,
+        "fpcvt64toi64" | "fp_cvt64toi64" | "fcvtf64i64" => Opcode::FpCvtFp64ToI64,
         "aesenc" | "aes_enc" => Opcode::AesEnc,
         "aesdec" | "aes_dec" => Opcode::AesDec,
         "acqload" | "acq_load" | "acq_ld" => Opcode::AcqLoad,
@@ -1406,9 +1492,16 @@ start:
 }
 
 {
+  I0: addi r5, r3, 5
+  I1: subi r6, r3, 7
+  M : std [r0 + 0x100], r3
+  X : nop
+}
+
+{
   I0: [p1] movi r4, 1
   I1: [!p1] movi r4, 0
-  M : std [r0 + 0x100], r3
+  M : nop
   X : nop
 }
 
@@ -1429,6 +1522,8 @@ start:
         assert!(cpu.halted);
         assert_eq!(cpu.read_gpr(3), 30);
         assert_eq!(cpu.read_gpr(4), 1);
+        assert_eq!(cpu.read_gpr(5), 35);
+        assert_eq!(cpu.read_gpr(6), 23);
         let stored = u64::from_le_bytes(cpu.memory[0x100..0x108].try_into().unwrap());
         assert_eq!(stored, 30);
     }

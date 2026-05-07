@@ -223,9 +223,21 @@ pub fn unit_kind_executes_runtime(kind: UnitKind, opcode: Opcode) -> (ret: bool)
 {
     match kind {
         UnitKind::IntegerAlu => match opcode {
-            Opcode::Add | Opcode::Sub | Opcode::And | Opcode::Or | Opcode::Xor
-            | Opcode::Shl | Opcode::Srl | Opcode::Sra | Opcode::Mov | Opcode::MovImm
-            | Opcode::CmpEq | Opcode::CmpLt | Opcode::CmpUlt => true,
+            Opcode::Add
+            | Opcode::AddImm
+            | Opcode::Sub
+            | Opcode::SubImm
+            | Opcode::And
+            | Opcode::Or
+            | Opcode::Xor
+            | Opcode::Shl
+            | Opcode::Srl
+            | Opcode::Sra
+            | Opcode::Mov
+            | Opcode::MovImm
+            | Opcode::CmpEq
+            | Opcode::CmpLt
+            | Opcode::CmpUlt => true,
             _ => false,
         },
         UnitKind::Memory => match opcode {
@@ -246,7 +258,22 @@ pub fn unit_kind_executes_runtime(kind: UnitKind, opcode: Opcode) -> (ret: bool)
             _ => false,
         },
         UnitKind::Fp(_) => match opcode {
-            Opcode::FpAdd32 | Opcode::FpMul32 | Opcode::FpAdd64 | Opcode::FpMul64 => true,
+            Opcode::FpAdd32
+            | Opcode::FpSub32
+            | Opcode::FpMul32
+            | Opcode::FpDiv32
+            | Opcode::FpCmp32
+            | Opcode::FpCvt32To64
+            | Opcode::FpCvtI32ToFp32
+            | Opcode::FpCvtFp32ToI32
+            | Opcode::FpAdd64
+            | Opcode::FpSub64
+            | Opcode::FpMul64
+            | Opcode::FpDiv64
+            | Opcode::FpCmp64
+            | Opcode::FpCvt64To32
+            | Opcode::FpCvtI64ToFp64
+            | Opcode::FpCvtFp64ToI64 => true,
             _ => false,
         },
         UnitKind::Aes(_) => match opcode {
@@ -385,9 +412,21 @@ pub open spec fn unit_decl_latency(unit: UnitDecl) -> u32 {
 pub open spec fn unit_kind_executes(kind: UnitKind, opcode: Opcode) -> bool {
     match kind {
         UnitKind::IntegerAlu => match opcode {
-            Opcode::Add | Opcode::Sub | Opcode::And | Opcode::Or | Opcode::Xor
-            | Opcode::Shl | Opcode::Srl | Opcode::Sra | Opcode::Mov | Opcode::MovImm
-            | Opcode::CmpEq | Opcode::CmpLt | Opcode::CmpUlt => true,
+            Opcode::Add
+            | Opcode::AddImm
+            | Opcode::Sub
+            | Opcode::SubImm
+            | Opcode::And
+            | Opcode::Or
+            | Opcode::Xor
+            | Opcode::Shl
+            | Opcode::Srl
+            | Opcode::Sra
+            | Opcode::Mov
+            | Opcode::MovImm
+            | Opcode::CmpEq
+            | Opcode::CmpLt
+            | Opcode::CmpUlt => true,
             _ => false,
         },
         UnitKind::Memory => match opcode {
@@ -408,7 +447,22 @@ pub open spec fn unit_kind_executes(kind: UnitKind, opcode: Opcode) -> bool {
             _ => false,
         },
         UnitKind::Fp(_) => match opcode {
-            Opcode::FpAdd32 | Opcode::FpMul32 | Opcode::FpAdd64 | Opcode::FpMul64 => true,
+            Opcode::FpAdd32
+            | Opcode::FpSub32
+            | Opcode::FpMul32
+            | Opcode::FpDiv32
+            | Opcode::FpCmp32
+            | Opcode::FpCvt32To64
+            | Opcode::FpCvtI32ToFp32
+            | Opcode::FpCvtFp32ToI32
+            | Opcode::FpAdd64
+            | Opcode::FpSub64
+            | Opcode::FpMul64
+            | Opcode::FpDiv64
+            | Opcode::FpCmp64
+            | Opcode::FpCvt64To32
+            | Opcode::FpCvtI64ToFp64
+            | Opcode::FpCvtFp64ToI64 => true,
             _ => false,
         },
         UnitKind::Aes(_) => match opcode {
@@ -444,9 +498,21 @@ pub open spec fn legacy_slot_accepts_opcode(slot: int, opcode: Opcode) -> bool {
     opcode == Opcode::Nop ||
     if slot % 4 == 0 || slot % 4 == 1 {
         match opcode {
-            Opcode::Add | Opcode::Sub | Opcode::And | Opcode::Or | Opcode::Xor
-            | Opcode::Shl | Opcode::Srl | Opcode::Sra | Opcode::Mov | Opcode::MovImm
-            | Opcode::CmpEq | Opcode::CmpLt | Opcode::CmpUlt => true,
+            Opcode::Add
+            | Opcode::AddImm
+            | Opcode::Sub
+            | Opcode::SubImm
+            | Opcode::And
+            | Opcode::Or
+            | Opcode::Xor
+            | Opcode::Shl
+            | Opcode::Srl
+            | Opcode::Sra
+            | Opcode::Mov
+            | Opcode::MovImm
+            | Opcode::CmpEq
+            | Opcode::CmpLt
+            | Opcode::CmpUlt => true,
             _ => false,
         }
     } else if slot % 4 == 2 {
@@ -479,7 +545,9 @@ pub proof fn lemma_canonical_layout_matches_legacy_slot_class()
     by {
         match opcode {
             Opcode::Add => {}
+            Opcode::AddImm => {}
             Opcode::Sub => {}
+            Opcode::SubImm => {}
             Opcode::And => {}
             Opcode::Or => {}
             Opcode::Xor => {}
@@ -512,9 +580,21 @@ pub proof fn lemma_canonical_layout_matches_legacy_slot_class()
             Opcode::PXor => {}
             Opcode::PNot => {}
             Opcode::FpAdd32 => {}
+            Opcode::FpSub32 => {}
             Opcode::FpMul32 => {}
+            Opcode::FpDiv32 => {}
+            Opcode::FpCmp32 => {}
+            Opcode::FpCvt32To64 => {}
+            Opcode::FpCvtI32ToFp32 => {}
+            Opcode::FpCvtFp32ToI32 => {}
             Opcode::FpAdd64 => {}
+            Opcode::FpSub64 => {}
             Opcode::FpMul64 => {}
+            Opcode::FpDiv64 => {}
+            Opcode::FpCmp64 => {}
+            Opcode::FpCvt64To32 => {}
+            Opcode::FpCvtI64ToFp64 => {}
+            Opcode::FpCvtFp64ToI64 => {}
             Opcode::AesEnc => {}
             Opcode::AesDec => {}
             Opcode::AcqLoad => {}

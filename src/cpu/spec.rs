@@ -34,14 +34,20 @@ pub open spec fn spec_pred_src(cpu: &CpuState, r: Option<usize>) -> bool {
 
 /// Is `op` an opcode that writes its result to a GPR via writeback?
 pub open spec fn spec_is_gpr_writer(op: Opcode) -> bool {
-    op == Opcode::Add  || op == Opcode::Sub  || op == Opcode::And ||
+    op == Opcode::Add  || op == Opcode::AddImm || op == Opcode::Sub  || op == Opcode::SubImm || op == Opcode::And ||
     op == Opcode::Or   || op == Opcode::Xor  || op == Opcode::Shl ||
     op == Opcode::Srl  || op == Opcode::Sra  || op == Opcode::Mov ||
     op == Opcode::MovImm || op == Opcode::Mul || op == Opcode::MulH ||
     op == Opcode::Lea  || op == Opcode::LoadB || op == Opcode::LoadH ||
     op == Opcode::LoadW || op == Opcode::LoadD || op == Opcode::AcqLoad ||
-    op == Opcode::FpAdd32 || op == Opcode::FpMul32 ||
-    op == Opcode::FpAdd64 || op == Opcode::FpMul64 ||
+    op == Opcode::FpAdd32 || op == Opcode::FpSub32 ||
+    op == Opcode::FpMul32 || op == Opcode::FpDiv32 ||
+    op == Opcode::FpCvt32To64 || op == Opcode::FpCvtI32ToFp32 ||
+    op == Opcode::FpCvtFp32ToI32 ||
+    op == Opcode::FpAdd64 || op == Opcode::FpSub64 ||
+    op == Opcode::FpMul64 || op == Opcode::FpDiv64 ||
+    op == Opcode::FpCvt64To32 || op == Opcode::FpCvtI64ToFp64 ||
+    op == Opcode::FpCvtFp64ToI64 ||
     op == Opcode::AesEnc || op == Opcode::AesDec
 }
 
@@ -66,6 +72,7 @@ pub open spec fn spec_gpr_write_dst(op: Opcode, dst: Option<usize>) -> Option<us
 /// Spec: does this opcode write a predicate register destination?
 pub open spec fn spec_opcode_writes_pred(op: Opcode) -> bool {
     op == Opcode::CmpEq || op == Opcode::CmpLt || op == Opcode::CmpUlt
+    || op == Opcode::FpCmp32 || op == Opcode::FpCmp64
     || op == Opcode::PAnd || op == Opcode::POr || op == Opcode::PXor || op == Opcode::PNot
 }
 

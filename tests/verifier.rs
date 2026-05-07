@@ -205,7 +205,9 @@ fn canonical_layout_matches_legacy_slot_positions() {
     let layout = canonical_layout(W);
     let integer_ops = [
         Opcode::Add,
+        Opcode::AddImm,
         Opcode::Sub,
+        Opcode::SubImm,
         Opcode::And,
         Opcode::Or,
         Opcode::Xor,

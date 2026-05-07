@@ -150,10 +150,18 @@ impl CpuState {
                 syl.dst.is_some() && syl.dst.unwrap() > 0 && syl.dst.unwrap() < self.num_gprs ==>
                 self.gprs[syl.dst.unwrap() as int] ==
                     spec_src(old(self), syl.src[0]).wrapping_add(spec_src(old(self), syl.src[1])),
+            syl.opcode == Opcode::AddImm &&
+                syl.dst.is_some() && syl.dst.unwrap() > 0 && syl.dst.unwrap() < self.num_gprs ==>
+                self.gprs[syl.dst.unwrap() as int] ==
+                    spec_src(old(self), syl.src[0]).wrapping_add(syl.imm as u64),
             syl.opcode == Opcode::Sub &&
                 syl.dst.is_some() && syl.dst.unwrap() > 0 && syl.dst.unwrap() < self.num_gprs ==>
                 self.gprs[syl.dst.unwrap() as int] ==
                     spec_src(old(self), syl.src[0]).wrapping_sub(spec_src(old(self), syl.src[1])),
+            syl.opcode == Opcode::SubImm &&
+                syl.dst.is_some() && syl.dst.unwrap() > 0 && syl.dst.unwrap() < self.num_gprs ==>
+                self.gprs[syl.dst.unwrap() as int] ==
+                    spec_src(old(self), syl.src[0]).wrapping_sub(syl.imm as u64),
             syl.opcode == Opcode::And &&
                 syl.dst.is_some() && syl.dst.unwrap() > 0 && syl.dst.unwrap() < self.num_gprs ==>
                 self.gprs[syl.dst.unwrap() as int] ==
@@ -191,7 +199,9 @@ impl CpuState {
 
         match syl.opcode {
             Opcode::Add     => self.writeback(syl, src0.wrapping_add(src1), lat),
+            Opcode::AddImm  => self.writeback(syl, src0.wrapping_add(imm), lat),
             Opcode::Sub     => self.writeback(syl, src0.wrapping_sub(src1), lat),
+            Opcode::SubImm  => self.writeback(syl, src0.wrapping_sub(imm), lat),
             Opcode::And     => self.writeback(syl, src0 & src1, lat),
             Opcode::Or      => self.writeback(syl, src0 | src1, lat),
             Opcode::Xor     => self.writeback(syl, src0 ^ src1, lat),
@@ -234,12 +244,32 @@ impl CpuState {
                 let v = (src0 as u32).wrapping_add(src1 as u32) as u64;
                 self.writeback(syl, v, lat);
             }
+            Opcode::FpSub32 => {
+                let v = (src0 as u32).wrapping_sub(src1 as u32) as u64;
+                self.writeback(syl, v, lat);
+            }
             Opcode::FpMul32 => {
                 let v = (src0 as u32).wrapping_mul(src1 as u32) as u64;
                 self.writeback(syl, v, lat);
             }
+            Opcode::FpDiv32 => {
+                let rhs = src1 as u32;
+                let v = if rhs == 0 { 0 } else { (src0 as u32) / rhs } as u64;
+                self.writeback(syl, v, lat);
+            }
+            Opcode::FpCvt32To64 => self.writeback(syl, src0 as u32 as u64, lat),
+            Opcode::FpCvtI32ToFp32 => self.writeback(syl, src0 as u32 as u64, lat),
+            Opcode::FpCvtFp32ToI32 => self.writeback(syl, src0 as u32 as i32 as u64, lat),
             Opcode::FpAdd64 => self.writeback(syl, src0.wrapping_add(src1), lat),
+            Opcode::FpSub64 => self.writeback(syl, src0.wrapping_sub(src1), lat),
             Opcode::FpMul64 => self.writeback(syl, src0.wrapping_mul(src1), lat),
+            Opcode::FpDiv64 => {
+                let v = if src1 == 0 { 0 } else { src0 / src1 };
+                self.writeback(syl, v, lat);
+            }
+            Opcode::FpCvt64To32 => self.writeback(syl, (src0 as u32) as u64, lat),
+            Opcode::FpCvtI64ToFp64 => self.writeback(syl, src0, lat),
+            Opcode::FpCvtFp64ToI64 => self.writeback(syl, src0, lat),
             Opcode::AesEnc => self.writeback(syl, src0 ^ src1 ^ 0x63u64, lat),
             Opcode::AesDec => self.writeback(syl, src0 ^ src1 ^ 0x05u64, lat),
             _ => {},
@@ -249,7 +279,9 @@ impl CpuState {
     fn exec_compare(&mut self, syl: &Syllable)
         requires
             old(self).wf(),
-            syl.opcode == Opcode::CmpEq || syl.opcode == Opcode::CmpLt || syl.opcode == Opcode::CmpUlt,
+            syl.opcode == Opcode::CmpEq || syl.opcode == Opcode::CmpLt ||
+            syl.opcode == Opcode::CmpUlt || syl.opcode == Opcode::FpCmp32 ||
+            syl.opcode == Opcode::FpCmp64,
         ensures
             self.wf(),
             self.cycle      == old(self).cycle,
@@ -271,6 +303,15 @@ impl CpuState {
                 syl.dst.is_some() && syl.dst.unwrap() > 0 && syl.dst.unwrap() < self.num_preds ==>
                 self.preds[syl.dst.unwrap() as int] ==
                     (spec_src(old(self), syl.src[0]) < spec_src(old(self), syl.src[1])),
+            syl.opcode == Opcode::FpCmp32 &&
+                syl.dst.is_some() && syl.dst.unwrap() > 0 && syl.dst.unwrap() < self.num_preds ==>
+                self.preds[syl.dst.unwrap() as int] ==
+                    ((spec_src(old(self), syl.src[0]) as u32) ==
+                     (spec_src(old(self), syl.src[1]) as u32)),
+            syl.opcode == Opcode::FpCmp64 &&
+                syl.dst.is_some() && syl.dst.unwrap() > 0 && syl.dst.unwrap() < self.num_preds ==>
+                self.preds[syl.dst.unwrap() as int] ==
+                    (spec_src(old(self), syl.src[0]) == spec_src(old(self), syl.src[1])),
     {
         let src0 = self.read_src_gpr(syl.src[0]);
         let src1 = self.read_src_gpr(syl.src[1]);
@@ -280,6 +321,8 @@ impl CpuState {
             Opcode::CmpEq  => self.write_pred(syl.dst.unwrap_or(0), src0 == src1),
             Opcode::CmpLt  => self.write_pred(syl.dst.unwrap_or(0), (src0 as i64) < (src1 as i64)),
             Opcode::CmpUlt => self.write_pred(syl.dst.unwrap_or(0), src0 < src1),
+            Opcode::FpCmp32 => self.write_pred(syl.dst.unwrap_or(0), (src0 as u32) == (src1 as u32)),
+            Opcode::FpCmp64 => self.write_pred(syl.dst.unwrap_or(0), src0 == src1),
             _ => {},
         }
     }
@@ -498,11 +541,21 @@ impl CpuState {
                     spec_src(old(self), syl.src[0]).wrapping_add(
                     spec_src(old(self), syl.src[1])),
 
+            spec_syl_active(old(self), syl) && syl.opcode == Opcode::AddImm &&
+                syl.dst.is_some() && syl.dst.unwrap() > 0 && syl.dst.unwrap() < self.num_gprs ==>
+                self.gprs[syl.dst.unwrap() as int] ==
+                    spec_src(old(self), syl.src[0]).wrapping_add(syl.imm as u64),
+
             spec_syl_active(old(self), syl) && syl.opcode == Opcode::Sub &&
                 syl.dst.is_some() && syl.dst.unwrap() > 0 && syl.dst.unwrap() < self.num_gprs ==>
                 self.gprs[syl.dst.unwrap() as int] ==
                     spec_src(old(self), syl.src[0]).wrapping_sub(
                     spec_src(old(self), syl.src[1])),
+
+            spec_syl_active(old(self), syl) && syl.opcode == Opcode::SubImm &&
+                syl.dst.is_some() && syl.dst.unwrap() > 0 && syl.dst.unwrap() < self.num_gprs ==>
+                self.gprs[syl.dst.unwrap() as int] ==
+                    spec_src(old(self), syl.src[0]).wrapping_sub(syl.imm as u64),
 
             spec_syl_active(old(self), syl) && syl.opcode == Opcode::And &&
                 syl.dst.is_some() && syl.dst.unwrap() > 0 && syl.dst.unwrap() < self.num_gprs ==>
@@ -652,15 +705,19 @@ impl CpuState {
 
         match syl.opcode {
             Opcode::Nop     => {}
-            Opcode::Add | Opcode::Sub | Opcode::And | Opcode::Or | Opcode::Xor |
+            Opcode::Add | Opcode::AddImm | Opcode::Sub | Opcode::SubImm | Opcode::And | Opcode::Or | Opcode::Xor |
             Opcode::Shl | Opcode::Srl | Opcode::Sra | Opcode::Mov | Opcode::MovImm |
             Opcode::Mul | Opcode::MulH | Opcode::LoadD | Opcode::LoadW |
             Opcode::LoadH | Opcode::LoadB | Opcode::Lea | Opcode::AcqLoad |
-            Opcode::FpAdd32 | Opcode::FpMul32 | Opcode::FpAdd64 | Opcode::FpMul64 |
+            Opcode::FpAdd32 | Opcode::FpSub32 | Opcode::FpMul32 | Opcode::FpDiv32 |
+            Opcode::FpCvt32To64 | Opcode::FpCvtI32ToFp32 | Opcode::FpCvtFp32ToI32 |
+            Opcode::FpAdd64 | Opcode::FpSub64 | Opcode::FpMul64 |
+            Opcode::FpDiv64 | Opcode::FpCvt64To32 | Opcode::FpCvtI64ToFp64 |
+            Opcode::FpCvtFp64ToI64 |
             Opcode::AesEnc | Opcode::AesDec => {
                 self.exec_gpr_writer(syl, lat);
             }
-            Opcode::CmpEq | Opcode::CmpLt | Opcode::CmpUlt => {
+            Opcode::CmpEq | Opcode::CmpLt | Opcode::CmpUlt | Opcode::FpCmp32 | Opcode::FpCmp64 => {
                 self.exec_compare(syl);
             }
             Opcode::StoreD | Opcode::StoreW | Opcode::StoreH | Opcode::StoreB | Opcode::RelStore => {

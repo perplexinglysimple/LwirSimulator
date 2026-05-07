@@ -14,8 +14,12 @@ pub enum Opcode {
     // Integer slot ops
     /// `dst = src0 + src1` with wrapping arithmetic.
     Add,
+    /// `dst = src0 + imm` with wrapping arithmetic.
+    AddImm,
     /// `dst = src0 - src1` with wrapping arithmetic.
     Sub,
+    /// `dst = src0 - imm` with wrapping arithmetic.
+    SubImm,
     /// `dst = src0 & src1`.
     And,
     /// `dst = src0 | src1`.
@@ -90,12 +94,36 @@ pub enum Opcode {
     PNot,
     /// Placeholder FP32 add over GPR bit patterns.
     FpAdd32,
+    /// Placeholder FP32 subtract over GPR bit patterns.
+    FpSub32,
     /// Placeholder FP32 multiply over GPR bit patterns.
     FpMul32,
+    /// Placeholder FP32 divide over GPR bit patterns.
+    FpDiv32,
+    /// Placeholder FP32 compare over GPR bit patterns.
+    FpCmp32,
+    /// Placeholder FP32-to-FP64 conversion over GPR bit patterns.
+    FpCvt32To64,
+    /// Placeholder signed-int32-to-FP32 conversion over GPR bit patterns.
+    FpCvtI32ToFp32,
+    /// Placeholder FP32-to-signed-int32 conversion over GPR bit patterns.
+    FpCvtFp32ToI32,
     /// Placeholder FP64 add over GPR bit patterns.
     FpAdd64,
+    /// Placeholder FP64 subtract over GPR bit patterns.
+    FpSub64,
     /// Placeholder FP64 multiply over GPR bit patterns.
     FpMul64,
+    /// Placeholder FP64 divide over GPR bit patterns.
+    FpDiv64,
+    /// Placeholder FP64 compare over GPR bit patterns.
+    FpCmp64,
+    /// Placeholder FP64-to-FP32 conversion over GPR bit patterns.
+    FpCvt64To32,
+    /// Placeholder signed-int64-to-FP64 conversion over GPR bit patterns.
+    FpCvtI64ToFp64,
+    /// Placeholder FP64-to-signed-int64 conversion over GPR bit patterns.
+    FpCvtFp64ToI64,
     /// Placeholder AES encrypt round over GPR bit patterns.
     AesEnc,
     /// Placeholder AES decrypt round over GPR bit patterns.
@@ -167,7 +195,9 @@ impl Opcode {
     pub fn writes_gpr(self) -> bool {
         match self {
             Opcode::Add
+            | Opcode::AddImm
             | Opcode::Sub
+            | Opcode::SubImm
             | Opcode::And
             | Opcode::Or
             | Opcode::Xor
@@ -185,15 +215,27 @@ impl Opcode {
             | Opcode::LoadD
             | Opcode::AcqLoad
             | Opcode::FpAdd32
+            | Opcode::FpSub32
             | Opcode::FpMul32
+            | Opcode::FpDiv32
+            | Opcode::FpCvt32To64
+            | Opcode::FpCvtI32ToFp32
+            | Opcode::FpCvtFp32ToI32
             | Opcode::FpAdd64
+            | Opcode::FpSub64
             | Opcode::FpMul64
+            | Opcode::FpDiv64
+            | Opcode::FpCvt64To32
+            | Opcode::FpCvtI64ToFp64
+            | Opcode::FpCvtFp64ToI64
             | Opcode::AesEnc
             | Opcode::AesDec
             | Opcode::Call => true,
             Opcode::CmpEq
             | Opcode::CmpLt
             | Opcode::CmpUlt
+            | Opcode::FpCmp32
+            | Opcode::FpCmp64
             | Opcode::StoreB
             | Opcode::StoreH
             | Opcode::StoreW
@@ -218,12 +260,16 @@ impl Opcode {
             Opcode::CmpEq
             | Opcode::CmpLt
             | Opcode::CmpUlt
+            | Opcode::FpCmp32
+            | Opcode::FpCmp64
             | Opcode::PAnd
             | Opcode::POr
             | Opcode::PXor
             | Opcode::PNot => true,
             Opcode::Add
+            | Opcode::AddImm
             | Opcode::Sub
+            | Opcode::SubImm
             | Opcode::And
             | Opcode::Or
             | Opcode::Xor
@@ -241,9 +287,19 @@ impl Opcode {
             | Opcode::LoadD
             | Opcode::AcqLoad
             | Opcode::FpAdd32
+            | Opcode::FpSub32
             | Opcode::FpMul32
+            | Opcode::FpDiv32
+            | Opcode::FpCvt32To64
+            | Opcode::FpCvtI32ToFp32
+            | Opcode::FpCvtFp32ToI32
             | Opcode::FpAdd64
+            | Opcode::FpSub64
             | Opcode::FpMul64
+            | Opcode::FpDiv64
+            | Opcode::FpCvt64To32
+            | Opcode::FpCvtI64ToFp64
+            | Opcode::FpCvtFp64ToI64
             | Opcode::AesEnc
             | Opcode::AesDec
             | Opcode::StoreB
@@ -267,7 +323,9 @@ impl Opcode {
         match self {
             Opcode::PAnd | Opcode::POr | Opcode::PXor | Opcode::PNot => true,
             Opcode::Add
+            | Opcode::AddImm
             | Opcode::Sub
+            | Opcode::SubImm
             | Opcode::And
             | Opcode::Or
             | Opcode::Xor
@@ -288,9 +346,21 @@ impl Opcode {
             | Opcode::LoadD
             | Opcode::AcqLoad
             | Opcode::FpAdd32
+            | Opcode::FpSub32
             | Opcode::FpMul32
+            | Opcode::FpDiv32
+            | Opcode::FpCmp32
+            | Opcode::FpCvt32To64
+            | Opcode::FpCvtI32ToFp32
+            | Opcode::FpCvtFp32ToI32
             | Opcode::FpAdd64
+            | Opcode::FpSub64
             | Opcode::FpMul64
+            | Opcode::FpDiv64
+            | Opcode::FpCmp64
+            | Opcode::FpCvt64To32
+            | Opcode::FpCvtI64ToFp64
+            | Opcode::FpCvtFp64ToI64
             | Opcode::AesEnc
             | Opcode::AesDec
             | Opcode::StoreB

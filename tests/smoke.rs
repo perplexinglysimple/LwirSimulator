@@ -1288,6 +1288,90 @@ fn fp_and_aes_units_parse_verify_and_execute_placeholders() {
   i0: nop
   i1: nop
   m : nop
+  x : fsub64 r5, r2, r1
+}
+
+{
+  i0: nop
+  i1: nop
+  m : nop
+  x : fdiv64 r6, r2, r1
+}
+
+{
+  i0: nop
+  i1: nop
+  m : nop
+  x : fcvt32to64 r7, r5
+}
+
+{
+  i0: nop
+  i1: nop
+  m : nop
+  x : fcvt64to32 r8, r5
+}
+
+{
+  i0: nop
+  i1: nop
+  m : nop
+  x : fsub32 r9, r1, r2
+}
+
+{
+  i0: nop
+  i1: nop
+  m : nop
+  x : fdiv32 r10, r2, r1
+}
+
+{
+  i0: nop
+  i1: nop
+  m : nop
+  x : fcmp64 p1, r1, r1
+}
+
+{
+  i0: nop
+  i1: nop
+  m : nop
+  x : fcmp32 p2, r1, r2
+}
+
+{
+  i0: nop
+  i1: nop
+  m : nop
+  x : fcvti32f32 r11, r9
+}
+
+{
+  i0: nop
+  i1: nop
+  m : nop
+  x : fcvtf32i32 r12, r11
+}
+
+{
+  i0: nop
+  i1: nop
+  m : nop
+  x : fcvti64f64 r13, r5
+}
+
+{
+  i0: nop
+  i1: nop
+  m : nop
+  x : fcvtf64i64 r14, r13
+}
+
+{
+  i0: nop
+  i1: nop
+  m : nop
   x : aesenc r4, r1, r2
 }
 
@@ -1303,6 +1387,12 @@ fn fp_and_aes_units_parse_verify_and_execute_placeholders() {
     assert_eq!(program.layout.units[4].latency, Some(6));
     assert_eq!(program.layout.units[5].latency, Some(4));
     assert!(program.layout.slot_can_execute(3, Opcode::FpAdd64));
+    assert!(program.layout.slot_can_execute(3, Opcode::FpSub64));
+    assert!(program.layout.slot_can_execute(3, Opcode::FpDiv64));
+    assert!(program.layout.slot_can_execute(3, Opcode::FpCmp64));
+    assert!(program.layout.slot_can_execute(3, Opcode::FpCvt64To32));
+    assert!(program.layout.slot_can_execute(3, Opcode::FpCvtI32ToFp32));
+    assert!(program.layout.slot_can_execute(3, Opcode::FpCvtFp64ToI64));
     assert!(program.layout.slot_can_execute(3, Opcode::AesEnc));
 
     let mut cpu = CpuState::new(W, LatencyTable::default());
@@ -1311,6 +1401,18 @@ fn fp_and_aes_units_parse_verify_and_execute_placeholders() {
     assert!(cpu.halted);
     assert_eq!(cpu.read_gpr(3), 42);
     assert_eq!(cpu.read_gpr(4), 10 ^ 32 ^ 0x63);
+    assert_eq!(cpu.read_gpr(5), 22);
+    assert_eq!(cpu.read_gpr(6), 3);
+    assert_eq!(cpu.read_gpr(7), 22);
+    assert_eq!(cpu.read_gpr(8), 22);
+    assert_eq!(cpu.read_gpr(9), (10u32.wrapping_sub(32)) as u64);
+    assert_eq!(cpu.read_gpr(10), 3);
+    assert_eq!(cpu.read_gpr(11), cpu.read_gpr(9));
+    assert_eq!(cpu.read_gpr(12), 10u64.wrapping_sub(32));
+    assert_eq!(cpu.read_gpr(13), 22);
+    assert_eq!(cpu.read_gpr(14), 22);
+    assert!(cpu.read_pred(1));
+    assert!(!cpu.read_pred(2));
 }
 
 #[test]

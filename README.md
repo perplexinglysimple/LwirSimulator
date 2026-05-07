@@ -306,6 +306,7 @@ Supported operand shapes, grouped by hardware unit kind:
 
 - `integer_alu`
   - `add/sub/and/or/xor/shl/srl/sra dst, src0, src1`
+  - `addi/subi dst, src0, imm`
   - `mov dst, src0`
   - `mov_imm dst, imm`
   - `cmpeq/cmplt/cmpult pdst, src0, src1`
@@ -326,7 +327,12 @@ Supported operand shapes, grouped by hardware unit kind:
 - `multiplier`
   - `mul/mulh dst, src0, src1`
 - `fp { variant ... }`
-  - `fpadd32/fpmul32/fpadd64/fpmul64 dst, src0, src1` (placeholder semantics)
+  - `fpadd32/fpsub32/fpmul32/fpdiv32 dst, src0, src1` (placeholder 32-bit semantics)
+  - `fpadd64/fpsub64/fpmul64/fpdiv64 dst, src0, src1` (placeholder 64-bit semantics)
+  - `fpcmp32/fpcmp64 pdst, src0, src1` (placeholder equality compare)
+  - `fpcvt32to64/fpcvt64to32 dst, src0` (placeholder width conversion)
+  - `fpcvti32to32/fpcvti64to64 dst, src0` (placeholder signed integer to FP conversion)
+  - `fpcvt32toi32/fpcvt64toi64 dst, src0` (placeholder FP to signed integer conversion)
 - `aes { variant aes_ni }`
   - `aesenc/aesdec dst, src0, src1` (placeholder semantics)
 - any slot
