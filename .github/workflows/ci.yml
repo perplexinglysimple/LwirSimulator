@@ -5,7 +5,12 @@ on:
     branches:
       - main
       - master
+    tags:
+      - 'v*'
   pull_request:
+
+permissions:
+  contents: write
 
 jobs:
   verus-and-tests:
@@ -74,6 +79,48 @@ jobs:
       - name: Run example programs
         working-directory: VliwSimulator
         run: scripts/check_examples.sh
+
+      - name: Build release simulator
+        working-directory: VliwSimulator
+        run: cargo build --release --bin vliw_simulator
+
+      - name: Package release simulator
+        id: package-simulator
+        working-directory: VliwSimulator
+        shell: bash
+        run: |
+          version="$(cargo metadata --no-deps --format-version 1 | jq -r '.packages[] | select(.name == "vliw_simulator") | .version')"
+          short_sha="${GITHUB_SHA::12}"
+          if [[ "${GITHUB_REF_TYPE}" == "tag" ]]; then
+            artifact_version="${GITHUB_REF_NAME}"
+          else
+            artifact_version="v${version}+${short_sha}"
+          fi
+
+          package="vliw_simulator-${artifact_version}-linux-x86_64"
+          mkdir -p "dist/${package}"
+          install -m 755 target/release/vliw_simulator "dist/${package}/vliw_simulator"
+          printf 'version=%s\ncommit=%s\nref=%s\n' "${artifact_version}" "${GITHUB_SHA}" "${GITHUB_REF_NAME}" > "dist/${package}/VERSION"
+          tar -C dist -czf "dist/${package}.tar.gz" "${package}"
+
+          echo "artifact_name=${package}" >> "${GITHUB_OUTPUT}"
+          echo "asset_path=VliwSimulator/dist/${package}.tar.gz" >> "${GITHUB_OUTPUT}"
+
+      - name: Upload simulator artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: ${{ steps.package-simulator.outputs.artifact_name }}
+          path: ${{ steps.package-simulator.outputs.asset_path }}
+
+      - name: Publish simulator release asset
+        if: github.ref_type == 'tag' && startsWith(github.ref_name, 'v')
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          gh release create "${GITHUB_REF_NAME}" "${{ steps.package-simulator.outputs.asset_path }}" \
+            --title "${GITHUB_REF_NAME}" \
+            --generate-notes \
+          || gh release upload "${GITHUB_REF_NAME}" "${{ steps.package-simulator.outputs.asset_path }}" --clobber
 
   coverage:
     runs-on: ubuntu-latest

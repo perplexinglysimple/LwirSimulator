@@ -166,6 +166,19 @@ Bundles: 5
 ==========================================
 ```
 
+### CI release artifacts
+
+CI builds the `vliw_simulator` release binary after verification, tests, and
+example programs pass. Branch and pull-request runs upload a versioned workflow
+artifact named like `vliw_simulator-v0.1.0+<commit>-linux-x86_64`.
+
+Pushing a tag named `vX.Y.Z` also publishes the same tarball as a GitHub release
+asset, so downstream projects can pin a simulator version:
+
+```sh
+gh release download v0.1.0 --pattern 'vliw_simulator-*-linux-x86_64.tar.gz'
+```
+
 ### Trace execution
 
 Use `--trace` to emit a deterministic scheduler-debug log instead of the final
