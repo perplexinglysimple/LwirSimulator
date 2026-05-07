@@ -230,6 +230,38 @@ fn check_bus_slot_conflicts(
     }
 }
 
+fn check_static_memory_bounds(
+    layout: &ProcessorLayout,
+    bidx: usize,
+    bundle: &Bundle,
+    diags: &mut Vec<Diagnostic>,
+) {
+    for (slot, syl) in bundle.syllables.iter().enumerate() {
+        let Some((_kind, width_bytes)) = memory_access(syl.opcode) else {
+            continue;
+        };
+        if syl.src[0] != Some(0) || syl.imm < 0 {
+            continue;
+        }
+        let Some(address) = usize::try_from(syl.imm).ok() else {
+            continue;
+        };
+        if !memory_access_in_bounds(layout.arch.memory_bytes, address, width_bytes) {
+            diags.push(Diagnostic {
+                bundle_idx: bidx,
+                slot,
+                rule: Rule::StaticMemoryBounds,
+                message: format!(
+                    "bundle {bidx} slot {slot}: `{}` at 0x{address:x} (width={width_bytes}) \
+                     is out of bounds (memory size=0x{:x})",
+                    opcode_name(syl.opcode),
+                    layout.arch.memory_bytes,
+                ),
+            });
+        }
+    }
+}
+
 fn update_ready_at(
     layout: &ProcessorLayout,
     bundle: &Bundle,
@@ -258,6 +290,24 @@ fn update_ready_at(
             }
         }
     }
+}
+
+fn memory_access(opcode: Opcode) -> Option<(&'static str, usize)> {
+    match opcode {
+        Opcode::LoadB => Some(("load", 1)),
+        Opcode::LoadH => Some(("load", 2)),
+        Opcode::LoadW => Some(("load", 4)),
+        Opcode::LoadD | Opcode::AcqLoad => Some(("load", 8)),
+        Opcode::StoreB => Some(("store", 1)),
+        Opcode::StoreH => Some(("store", 2)),
+        Opcode::StoreW => Some(("store", 4)),
+        Opcode::StoreD | Opcode::RelStore => Some(("store", 8)),
+        _ => None,
+    }
+}
+
+fn memory_access_in_bounds(memory_len: usize, address: usize, width_bytes: usize) -> bool {
+    width_bytes <= memory_len && address <= memory_len - width_bytes
 }
 
 fn is_load_opcode_for_timing(op: Opcode) -> bool {
@@ -349,6 +399,8 @@ pub enum Rule {
     GprReadyCycle,
     /// A memory syllable is scheduled on a cycle not owned by this CPU's bus slot.
     BusSlotConflict,
+    /// A memory syllable has a statically-known out-of-bounds address.
+    StaticMemoryBounds,
     /// A polling loop using `AcqLoad` has no matching `RelStore` on any other CPU.
     /// Without a producer the loop can never observe a flag change and is unbounded.
     UnboundedPollingLoop,
@@ -535,6 +587,7 @@ pub fn verify_program_for_cpu(
         check_pred_hazards(layout, bidx, bundle, &mut diags);
         check_gpr_timing(layout, bidx, bundle, issue_cycle, &ready_at, &mut diags);
         check_bus_slot_conflicts(layout, cpu_id, bidx, bundle, issue_cycle, &mut diags);
+        check_static_memory_bounds(layout, bidx, bundle, &mut diags);
         update_ready_at(layout, bundle, issue_cycle, latencies, &mut ready_at);
     }
 

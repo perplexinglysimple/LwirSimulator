@@ -10,6 +10,7 @@ A file is plain text with optional comments and labels.
 - Mandatory processor header:
   - `.processor { ... }`
   - Must declare `width`, hardware units, `layout slots`, cache config, and `topology { cpus 1 }`.
+  - May declare memory capacity with `memory { size 0x10000 }`; otherwise the default is 64 KiB.
   - Legacy `.width <N>` files are rejected.
 - Program is a sequence of **bundles**.
 
@@ -41,6 +42,16 @@ A `{ ... }` block = one bundle. Each line inside names one slot.
 ## 3. Labels
 
 Labels map to bundle indices (not byte offsets).
+
+## Processor Memory
+
+The processor has a byte-addressed little-endian memory. The default size is
+64 KiB. A header may override it with either `memory { size N }` or the legacy
+`arch { memory N }` spelling.
+
+```text
+memory { size 0x10000 }
+```
 
 ## Processor Cache
 

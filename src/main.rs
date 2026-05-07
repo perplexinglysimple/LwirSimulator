@@ -6,6 +6,7 @@
 use std::env;
 use std::fmt::Write;
 use std::fs;
+use std::panic::{catch_unwind, set_hook, take_hook, AssertUnwindSafe};
 use std::process::ExitCode;
 use vliw_simulator::asm::parse_program;
 use vliw_simulator::cache::CacheOutcome;
@@ -150,14 +151,22 @@ fn main() -> ExitCode {
 
     if output_mode == OutputMode::TraceText {
         let mut cpu = CpuState::new_for_layout(&program.layout, LatencyTable::default());
-        let trace = cpu.trace_program(&program.layout, &program.bundles);
+        let trace = match catch_simulation(|| cpu.trace_program(&program.layout, &program.bundles))
+        {
+            Ok(trace) => trace,
+            Err(err) => return memory_error_exit(err),
+        };
         print!("{trace}");
         return ExitCode::SUCCESS;
     }
 
     if output_mode == OutputMode::Json {
         let mut cpu = CpuState::new_for_layout(&program.layout, LatencyTable::default());
-        let trace = cpu.trace_program(&program.layout, &program.bundles);
+        let trace = match catch_simulation(|| cpu.trace_program(&program.layout, &program.bundles))
+        {
+            Ok(trace) => trace,
+            Err(err) => return memory_error_exit(err),
+        };
         print!("{}", final_state_json(&cpu, &trace));
         return ExitCode::SUCCESS;
     }
@@ -170,7 +179,9 @@ fn main() -> ExitCode {
                 return ExitCode::from(1);
             }
         };
-        system.run_until_quiescent();
+        if let Err(err) = catch_simulation(|| system.run_until_quiescent()) {
+            return memory_error_exit(err);
+        }
         print_dump_output(&system.cpus[0], dump_all_regs, &dump_regs, &dump_mems);
         return ExitCode::SUCCESS;
     }
@@ -186,9 +197,30 @@ fn main() -> ExitCode {
             return ExitCode::from(1);
         }
     };
-    system.run_until_quiescent();
+    if let Err(err) = catch_simulation(|| system.run_until_quiescent()) {
+        return memory_error_exit(err);
+    }
     print_cpu_state(&system.cpus[0]);
     ExitCode::SUCCESS
+}
+
+fn catch_simulation<T>(f: impl FnOnce() -> T) -> Result<T, Box<dyn std::any::Any + Send>> {
+    let hook = take_hook();
+    set_hook(Box::new(|_| {}));
+    let result = catch_unwind(AssertUnwindSafe(f));
+    set_hook(hook);
+    result
+}
+
+fn memory_error_exit(err: Box<dyn std::any::Any + Send>) -> ExitCode {
+    if let Some(message) = err.downcast_ref::<String>() {
+        eprintln!("{message}");
+    } else if let Some(message) = err.downcast_ref::<&str>() {
+        eprintln!("{message}");
+    } else {
+        eprintln!("error: simulation failed");
+    }
+    ExitCode::from(1)
 }
 
 fn print_usage(exe: &str) {

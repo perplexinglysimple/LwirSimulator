@@ -1,6 +1,6 @@
 use crate::bundle::Bundle;
 use crate::cache::{at_most_one_modified_cache_states, CacheState};
-use crate::cpu::{CpuState, ScoreboardEntry};
+use crate::cpu::{CpuState, ScoreboardEntry, StepResult};
 use crate::isa::{Opcode, Syllable};
 use crate::latency::LatencyTable;
 use crate::layout::{program_layout_compatible_runtime, ProcessorLayout};
@@ -206,15 +206,24 @@ impl System {
                 let one_bundle = vec![bundle];
                 let old_pc = self.cpus[cpu_id].pc;
                 self.cpus[cpu_id].pc = 0;
-                let stepped = self.cpus[cpu_id].step(&self.layout, &one_bundle);
-                if stepped {
-                    self.cpus[cpu_id].pc = old_pc + 1;
-                } else {
-                    self.cpus[cpu_id].pc = old_pc;
+                let step_result = self.cpus[cpu_id].step_checked(&self.layout, &one_bundle);
+                match step_result {
+                    StepResult::Issued | StepResult::Stalled => {
+                        self.cpus[cpu_id].pc = old_pc + 1;
+                        true
+                    }
+                    StepResult::Halted => {
+                        self.cpus[cpu_id].pc = old_pc;
+                        false
+                    }
+                    StepResult::Fault(fault) => panic!("{}", fault.diagnostic()),
                 }
-                stepped
             } else {
-                self.cpus[cpu_id].step(&self.layout, &self.programs[cpu_id])
+                match self.cpus[cpu_id].step_checked(&self.layout, &self.programs[cpu_id]) {
+                    StepResult::Issued | StepResult::Stalled => true,
+                    StepResult::Halted => false,
+                    StepResult::Fault(fault) => panic!("{}", fault.diagnostic()),
+                }
             };
 
             if stepped {
@@ -369,7 +378,10 @@ impl fmt::Display for BusEvent {
 impl SharedMemory {
     fn load(&self, address: usize, width_bytes: usize) -> u64 {
         if !memory_access_in_bounds(self.bytes.len(), address, width_bytes) {
-            return 0;
+            panic!(
+                "{}",
+                memory_bounds_error("load", address, width_bytes, self.bytes.len())
+            );
         }
         let mut value = 0u64;
         for offset in 0..width_bytes {
@@ -380,7 +392,10 @@ impl SharedMemory {
 
     fn store(&mut self, address: usize, width_bytes: usize, value: u64) {
         if !memory_access_in_bounds(self.bytes.len(), address, width_bytes) {
-            return;
+            panic!(
+                "{}",
+                memory_bounds_error("store", address, width_bytes, self.bytes.len())
+            );
         }
         for offset in 0..width_bytes {
             self.bytes[address + offset] = ((value >> (offset * 8)) & 0xff) as u8;
@@ -404,6 +419,17 @@ fn memory_access(opcode: Opcode) -> Option<(BusAccessKind, usize)> {
 
 fn memory_access_in_bounds(memory_len: usize, address: usize, width_bytes: usize) -> bool {
     width_bytes <= memory_len && address <= memory_len - width_bytes
+}
+
+fn memory_bounds_error(
+    kind: &str,
+    address: usize,
+    width_bytes: usize,
+    memory_len: usize,
+) -> String {
+    format!(
+        "error: {kind} at 0x{address:x} (width={width_bytes}) is out of bounds (memory size=0x{memory_len:x})"
+    )
 }
 
 fn mask_to_width(value: u64, width_bytes: usize) -> u64 {

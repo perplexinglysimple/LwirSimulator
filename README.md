@@ -30,7 +30,7 @@ is hard-coded into the simulator.
 | **Built-in unit kinds** | `integer_alu`, `memory`, `control`, `multiplier`, `fp { variant ... }`, `aes { variant aes_ni }` |
 | **GPRs** | 32 × 64-bit by default (`r0` = 0 hardwired); configurable via `arch { gprs N }` |
 | **Predicate registers** | 16 × 1-bit by default (`p0` = true hardwired); configurable via `arch { preds N }` |
-| **Memory** | 64 KiB byte-addressed little-endian by default; configurable via `arch { memory N }` |
+| **Memory** | 64 KiB byte-addressed little-endian by default; configurable via `arch { memory N }` or `memory { size N }` |
 | **L1D cache** | Direct-mapped, write-back, MSI-coherent across CPUs |
 | **Topology** | `topology { cpus N }`; symmetric layout per CPU |
 | **Bus** | Shared, deterministic round-robin: cycle `c` is owned by CPU `c % cpus` |
@@ -271,6 +271,7 @@ Minimal example:
   }
 
   cache { }
+  memory { size 0x10000 }
   topology { cpus 1 }
 }
 
@@ -358,6 +359,8 @@ The verifier emits diagnostics tagged with one of:
   layout's worst-case load latency
 - `bus-slot-conflict` — a memory op is scheduled on a cycle the issuing CPU
   does not own (multi-CPU only)
+- `static-memory-bounds` — a statically-known `r0 + imm` memory operand is
+  outside the processor's declared memory size
 - `unbounded-polling-loop` — a backward branch over an `acqload` has no
   matching `relstore` on any other CPU (multi-CPU only)
 

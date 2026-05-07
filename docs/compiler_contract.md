@@ -159,6 +159,18 @@ and is rejected.
   `verify_system` (multi-CPU). The single-CPU `vliw_verify` CLI does not run
   this pass.
 
+### 9) Statically-known memory operands must fit in declared memory
+
+For a memory opcode whose address is statically known as `r0 + imm`, the
+address range `[imm, imm + width)` must fit inside the processor's declared
+memory size. This catches spill operands like `[r0 + 0x10000]` without
+requiring symbolic execution of general register values.
+
+**Enforcement mapping:**
+- Runtime check: simulator memory loads/stores fail if the dynamic address is
+  out of bounds.
+- Static verifier rule: `static-memory-bounds`.
+
 ---
 
 ## Rule-to-check matrix
@@ -173,6 +185,7 @@ and is rejected.
 | GPR ready-cycle rule | `bundle_has_unready_gpr_sources` (dynamic stall) | `gpr-ready-cycle` (cache-/coherence-aware bound) |
 | Bus ownership for memory ops | `System::new` rejection | `bus-slot-conflict` |
 | Bounded `acqload` polling | (system rejection at `verify_system`) | `unbounded-polling-loop` |
+| Statically-known memory bounds | load/store runtime error | `static-memory-bounds` |
 
 ## Practical definition of a legal `.vliw` program
 
@@ -184,7 +197,8 @@ A program is legal for simulator acceptance if:
 3. The schedule is stall-free under the layout's worst-case load latency.
 4. (Multi-CPU only.) Every memory op is on its CPU's bus slot, and every
    `acqload` polling loop has a matching producer `relstore`.
-5. At runtime, when a bundle is issued, each active GPR source is
+5. Every statically-known `r0 + imm` memory operand fits in declared memory.
+6. At runtime, when a bundle is issued, each active GPR source is
    scoreboard-ready (otherwise the machine stalls until ready, and the
    schedule was outside the static contract from rule 6).
 

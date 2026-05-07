@@ -33,6 +33,16 @@ fn processor_header(width: usize) -> String {
     )
 }
 
+fn processor_header_with_memory(width: usize, memory_size: &str) -> String {
+    let mut header = processor_header(width);
+    let marker = "  cache { }\n";
+    header = header.replace(
+        marker,
+        &format!("  memory {{ size {memory_size} }}\n  cache {{ }}\n"),
+    );
+    header
+}
+
 fn sparse_no_multiplier_header() -> String {
     ".processor {
   width 4
@@ -88,6 +98,10 @@ fn mul(dst: usize, a: usize, b: usize) -> Syllable {
 
 fn store_d(base: usize, data: usize, imm: i64) -> Syllable {
     syl(Opcode::StoreD, None, Some(base), Some(data), imm)
+}
+
+fn load_d(dst: usize, base: usize, imm: i64) -> Syllable {
+    syl(Opcode::LoadD, Some(dst), Some(base), None, imm)
 }
 
 fn ret() -> Syllable {
@@ -667,6 +681,39 @@ fn detects_timing_violation_via_call_link_register_write() {
     assert!(has_rule(&diags, Rule::GprReadyCycle), "{diags:?}");
 }
 
+#[test]
+fn rejects_static_out_of_bounds_store_from_zero_base() {
+    let mut b = nop_bundle();
+    b.set_slot(2, store_d(0, 1, 0x10000));
+    let diags = verify_bundles(&[b], &LatencyTable::default());
+
+    assert!(has_rule(&diags, Rule::StaticMemoryBounds), "{diags:?}");
+    assert!(
+        diags
+            .iter()
+            .any(|d| d.message.contains("0x10000") && d.message.contains("memory size=0x10000")),
+        "{diags:?}"
+    );
+}
+
+#[test]
+fn rejects_static_out_of_bounds_load_that_crosses_memory_end() {
+    let mut b = nop_bundle();
+    b.set_slot(2, load_d(1, 0, 0xffff));
+    let diags = verify_bundles(&[b], &LatencyTable::default());
+
+    assert!(has_rule(&diags, Rule::StaticMemoryBounds), "{diags:?}");
+}
+
+#[test]
+fn accepts_static_memory_operand_inside_memory() {
+    let mut b = nop_bundle();
+    b.set_slot(2, store_d(0, 1, 0xfff8));
+    let diags = verify_bundles(&[b], &LatencyTable::default());
+
+    assert!(!has_rule(&diags, Rule::StaticMemoryBounds), "{diags:?}");
+}
+
 // ---------------------------------------------------------------------------
 // Clean programs produce no diagnostics
 // ---------------------------------------------------------------------------
@@ -824,6 +871,32 @@ fn verifier_binary_exits_one_on_raw_hazard() {
     assert_eq!(out.status.code(), Some(1));
     let stdout = String::from_utf8(out.stdout).unwrap();
     assert!(stdout.contains("same-bundle-gpr-raw"), "{stdout}");
+}
+
+#[test]
+fn verifier_binary_exits_one_on_static_memory_bounds() {
+    let path = write_temp_vliw(
+        "static-memory-bounds",
+        &format!(
+            "{}{}",
+            processor_header_with_memory(W, "0x10000"),
+            r#"
+{
+  m : store_d r0, r0, 0x10000
+}
+"#
+        ),
+    );
+
+    let out = std::process::Command::new(env!("CARGO_BIN_EXE_vliw_verify"))
+        .arg(&path)
+        .output()
+        .expect("binary should run");
+
+    assert_eq!(out.status.code(), Some(1));
+    let stdout = String::from_utf8(out.stdout).unwrap();
+    assert!(stdout.contains("static-memory-bounds"), "{stdout}");
+    assert!(stdout.contains("0x10000"), "{stdout}");
 }
 
 #[test]

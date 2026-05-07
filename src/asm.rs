@@ -159,6 +159,11 @@ fn parse_processor_block(
             parse_arch_fields(line, &mut arch)?;
             continue;
         }
+        if line.starts_with("memory") {
+            section = "memory";
+            parse_memory_fields(line, &mut arch)?;
+            continue;
+        }
         if line.starts_with("topology") {
             saw_topology = true;
             section = "topology";
@@ -221,6 +226,9 @@ fn parse_processor_block(
             }
             "cache" => {
                 parse_cache_fields(line, &mut cache)?;
+            }
+            "memory" => {
+                parse_memory_fields(line, &mut arch)?;
             }
             _ => {
                 return Err(format!(
@@ -452,12 +460,33 @@ fn parse_arch_fields(line: &str, arch: &mut ArchConfig) -> Result<(), String> {
                 i += 2;
             }
             "memory" | "memory_bytes" => {
-                arch.memory_bytes = parts[i + 1]
-                    .parse::<usize>()
+                arch.memory_bytes = parse_usize_literal(parts[i + 1])
                     .map_err(|_| format!("invalid architectural memory size `{}`", parts[i + 1]))?;
                 i += 2;
             }
             "arch" => {
+                i += 1;
+            }
+            _ => {
+                i += 1;
+            }
+        }
+    }
+    Ok(())
+}
+
+fn parse_memory_fields(line: &str, arch: &mut ArchConfig) -> Result<(), String> {
+    let cleaned = line.replace('{', " ").replace('}', " ");
+    let parts = cleaned.split_whitespace().collect::<Vec<_>>();
+    let mut i = 0usize;
+    while i + 1 < parts.len() {
+        match parts[i] {
+            "size" | "bytes" => {
+                arch.memory_bytes = parse_usize_literal(parts[i + 1])
+                    .map_err(|_| format!("invalid memory size `{}`", parts[i + 1]))?;
+                i += 2;
+            }
+            "memory" => {
                 i += 1;
             }
             _ => {
@@ -1182,6 +1211,16 @@ fn parse_pred(token: &str, line_no: usize) -> Result<usize, String> {
         .map_err(|_| format!("line {line_no}: invalid predicate `{token}`"))
 }
 
+fn parse_usize_literal(token: &str) -> Result<usize, String> {
+    if let Some(rest) = token.strip_prefix("0x") {
+        usize::from_str_radix(rest, 16).map_err(|_| format!("invalid integer `{token}`"))
+    } else {
+        token
+            .parse::<usize>()
+            .map_err(|_| format!("invalid integer `{token}`"))
+    }
+}
+
 fn parse_i64(token: &str) -> Result<i64, String> {
     if let Some(rest) = token.strip_prefix("-0x") {
         i64::from_str_radix(rest, 16)
@@ -1226,7 +1265,7 @@ fn strip_comment(line: &str) -> &str {
 #[cfg(test)]
 mod tests {
     use super::parse_program;
-    use crate::cpu::CpuState;
+    use crate::cpu::{CpuState, StepResult};
     use crate::isa::Opcode;
     use crate::latency::LatencyTable;
 
@@ -1247,6 +1286,16 @@ mod tests {
         )
     }
 
+    fn run_to_halt(cpu: &mut CpuState, program: &crate::program::Program) {
+        loop {
+            match cpu.step_checked(&program.layout, &program.bundles) {
+                StepResult::Issued | StepResult::Stalled => {}
+                StepResult::Halted => break,
+                StepResult::Fault(fault) => panic!("{}", fault.diagnostic()),
+            }
+        }
+    }
+
     #[test]
     fn parses_and_executes_text_program_with_labels() {
         let source = format!(
@@ -1265,7 +1314,7 @@ done:  x ret
         latencies.set(Opcode::Mul, 5);
         let mut cpu = CpuState::new_for_layout(&program.layout, latencies);
 
-        while cpu.step(&program.layout, &program.bundles) {}
+        run_to_halt(&mut cpu, &program);
 
         assert!(cpu.halted);
         assert_eq!(cpu.read_gpr(3), 42);
@@ -1375,7 +1424,7 @@ start:
         let program = parse_program(&source).expect("program should parse");
         let mut cpu = CpuState::new_for_layout(&program.layout, LatencyTable::default());
 
-        while cpu.step(&program.layout, &program.bundles) {}
+        run_to_halt(&mut cpu, &program);
 
         assert!(cpu.halted);
         assert_eq!(cpu.read_gpr(3), 30);

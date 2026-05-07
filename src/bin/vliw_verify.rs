@@ -66,6 +66,7 @@ fn main() -> ExitCode {
             Rule::SameBundlePredHazard => "same-bundle-pred-hazard",
             Rule::GprReadyCycle => "gpr-ready-cycle",
             Rule::BusSlotConflict => "bus-slot-conflict",
+            Rule::StaticMemoryBounds => "static-memory-bounds",
             Rule::UnboundedPollingLoop => "unbounded-polling-loop",
         };
         println!("[{rule_tag}] {}", d.message);

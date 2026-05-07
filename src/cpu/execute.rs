@@ -5,6 +5,100 @@ verus! {
 // ---------------------------------------------------------------------------
 
 impl CpuState {
+    pub open spec fn spec_memory_access_in_bounds(
+        memory_size: usize,
+        address: usize,
+        width_bytes: usize,
+    ) -> bool {
+        width_bytes <= memory_size && address <= memory_size - width_bytes
+    }
+
+    pub open spec fn spec_memory_fault_is_out_of_bounds(fault: MemoryFault) -> bool {
+        !Self::spec_memory_access_in_bounds(
+            fault.memory_size,
+            fault.address,
+            fault.width_bytes,
+        )
+    }
+
+    fn memory_access_in_bounds(
+        memory_size: usize,
+        address: usize,
+        width_bytes: usize,
+    ) -> (ret: bool)
+        ensures ret == Self::spec_memory_access_in_bounds(memory_size, address, width_bytes),
+    {
+        width_bytes <= memory_size && address <= memory_size - width_bytes
+    }
+
+    fn memory_access_for_opcode(opcode: Opcode) -> (ret: Option<(MemoryFaultKind, usize)>)
+    {
+        match opcode {
+            Opcode::LoadB => Some((MemoryFaultKind::Load, 1)),
+            Opcode::LoadH => Some((MemoryFaultKind::Load, 2)),
+            Opcode::LoadW => Some((MemoryFaultKind::Load, 4)),
+            Opcode::LoadD | Opcode::AcqLoad => Some((MemoryFaultKind::Load, 8)),
+            Opcode::StoreB => Some((MemoryFaultKind::Store, 1)),
+            Opcode::StoreH => Some((MemoryFaultKind::Store, 2)),
+            Opcode::StoreW => Some((MemoryFaultKind::Store, 4)),
+            Opcode::StoreD | Opcode::RelStore => Some((MemoryFaultKind::Store, 8)),
+            _ => None,
+        }
+    }
+
+    fn memory_fault_for_syllable(&self, syl: &Syllable) -> (ret: Option<MemoryFault>)
+        requires self.wf(),
+        ensures
+            ret.is_some() ==> Self::spec_memory_fault_is_out_of_bounds(ret.unwrap()),
+    {
+        let pred_val = self.read_pred(syl.predicate);
+        let active = if syl.pred_negated { !pred_val } else { pred_val };
+        if !active {
+            return None;
+        }
+
+        match Self::memory_access_for_opcode(syl.opcode) {
+            Some((kind, width_bytes)) => {
+                let base = self.read_src_gpr(syl.src[0]);
+                let address = base.wrapping_add(syl.imm as u64) as usize;
+                if Self::memory_access_in_bounds(self.mem_size, address, width_bytes) {
+                    None
+                } else {
+                    Some(MemoryFault {
+                        kind,
+                        address,
+                        width_bytes,
+                        memory_size: self.mem_size,
+                    })
+                }
+            }
+            None => None,
+        }
+    }
+
+    fn bundle_memory_fault(&self, bundle: &Bundle) -> (ret: Option<MemoryFault>)
+        requires self.wf(),
+        ensures
+            ret.is_some() ==> Self::spec_memory_fault_is_out_of_bounds(ret.unwrap()),
+    {
+        let mut slot = 0usize;
+        while slot < bundle.syllables.len()
+            invariant
+                self.wf(),
+                slot <= bundle.syllables.len(),
+            decreases bundle.syllables.len() - slot,
+        {
+            match self.memory_fault_for_syllable(&bundle.syllables[slot]) {
+                Some(fault) => {
+                    return Some(fault);
+                }
+                None => {}
+            }
+            slot += 1;
+        }
+        None
+    }
+
     /// Record a writeback: update the destination GPR.
     fn writeback(&mut self, syl: &Syllable, val: u64, latency: u32)
         requires old(self).wf(),
@@ -578,27 +672,39 @@ impl CpuState {
         }
     }
 
-    /// Advance by one bundle.
-    pub fn step(&mut self, layout: &ProcessorLayout, program: &Vec<Bundle>) -> (ret: bool)
+    /// Advance by one bundle, returning an explicit fault for out-of-bounds memory.
+    pub fn step_checked(&mut self, layout: &ProcessorLayout, program: &Vec<Bundle>) -> (ret: StepResult)
         requires
             old(self).wf(),
             old(self).cycle < u64::MAX,
         ensures
             self.wf(),
-            !ret ==> self.halted || old(self).pc >= program.len(),
-            ret  ==> old(self).cycle + 1 == self.cycle || self.halted,
+            ret == StepResult::Halted ==> self.halted || old(self).pc >= program.len(),
+            ret == StepResult::Stalled ==> old(self).cycle + 1 == self.cycle,
+            ret == StepResult::Issued ==> old(self).cycle + 1 == self.cycle || self.halted,
+            match ret {
+                StepResult::Fault(fault) => Self::spec_memory_fault_is_out_of_bounds(fault),
+                _ => true,
+            },
     {
         if self.halted || self.pc >= program.len() {
-            return false;
+            return StepResult::Halted;
         }
         let bundle = &program[self.pc];
         if !self.bundle_is_legal(layout, bundle) {
             self.halted = true;
-            return false;
+            return StepResult::Halted;
         }
         if self.bundle_has_unready_gpr_sources(bundle) {
             self.cycle = self.cycle + 1;
-            return true;
+            return StepResult::Stalled;
+        }
+        match self.bundle_memory_fault(bundle) {
+            Some(fault) => {
+                self.halted = true;
+                return StepResult::Fault(fault);
+            }
+            None => {}
         }
         self.pc    = self.pc + 1;
         self.cycle = self.cycle + 1;
@@ -615,7 +721,7 @@ impl CpuState {
             if self.halted { break; }
             slot = slot + 1;
         }
-        true
+        StepResult::Issued
     }
 }
 

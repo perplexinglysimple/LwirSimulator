@@ -10,6 +10,28 @@ pub struct ScoreboardEntry {
     pub ready_cycle: u64,
 }
 
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum MemoryFaultKind {
+    Load,
+    Store,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct MemoryFault {
+    pub kind: MemoryFaultKind,
+    pub address: usize,
+    pub width_bytes: usize,
+    pub memory_size: usize,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum StepResult {
+    Issued,
+    Stalled,
+    Halted,
+    Fault(MemoryFault),
+}
+
 /// Full architectural state — all fields pub so callers can snapshot freely.
 #[derive(Clone, Debug)]
 pub struct CpuState {
@@ -29,3 +51,18 @@ pub struct CpuState {
 }
 
 } // verus!
+
+impl MemoryFault {
+    pub fn diagnostic(&self) -> String {
+        format!(
+            "error: {} at 0x{:x} (width={}) is out of bounds (memory size=0x{:x})",
+            match self.kind {
+                MemoryFaultKind::Load => "load",
+                MemoryFaultKind::Store => "store",
+            },
+            self.address,
+            self.width_bytes,
+            self.memory_size
+        )
+    }
+}

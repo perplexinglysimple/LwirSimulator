@@ -1,7 +1,7 @@
 use vliw_simulator::asm::parse_program;
 use vliw_simulator::bundle::Bundle;
 use vliw_simulator::cache::MsiState;
-use vliw_simulator::cpu::CpuState;
+use vliw_simulator::cpu::{CpuState, MemoryFaultKind, StepResult};
 use vliw_simulator::isa::{Opcode, Syllable};
 use vliw_simulator::latency::LatencyTable;
 use vliw_simulator::layout::{canonical_layout, ProcessorLayout};
@@ -24,6 +24,24 @@ fn processor_header(width: usize) -> String {
     format!(
         ".processor {{\n  width {width}\n\n  hardware {{\n    unit alu = integer_alu\n    unit mem = memory\n    unit ctrl = control\n    unit mul = multiplier\n  }}\n\n  layout slots {{\n{slots}  }}\n\n  cache {{ }}\n  topology {{ cpus 1 }}\n}}\n"
     )
+}
+
+fn write_temp_vliw(name: &str, source: &str) -> std::path::PathBuf {
+    let dir = std::path::Path::new("target").join("test-vliw");
+    std::fs::create_dir_all(&dir).unwrap();
+    let path = dir.join(format!("{name}-{}.vliw", std::process::id()));
+    std::fs::write(&path, source).unwrap();
+    path
+}
+
+fn panic_message(err: Box<dyn std::any::Any + Send>) -> String {
+    if let Some(message) = err.downcast_ref::<String>() {
+        message.clone()
+    } else if let Some(message) = err.downcast_ref::<&str>() {
+        message.to_string()
+    } else {
+        "non-string panic".to_string()
+    }
 }
 
 fn mov_imm(dst: usize, imm: i64) -> Syllable {
@@ -162,9 +180,21 @@ fn sparse_latency_table() -> LatencyTable {
     LatencyTable { entries: vec![] }
 }
 
-fn step(cpu: &mut CpuState, program: &Vec<Bundle>) -> bool {
+fn step_checked_progress(cpu: &mut CpuState, program: &Vec<Bundle>) -> bool {
     let layout = canonical_layout(cpu.width);
-    cpu.step(&layout, program)
+    step_checked_progress_with_layout(cpu, &layout, program)
+}
+
+fn step_checked_progress_with_layout(
+    cpu: &mut CpuState,
+    layout: &ProcessorLayout,
+    program: &Vec<Bundle>,
+) -> bool {
+    match cpu.step_checked(&layout, program) {
+        StepResult::Issued | StepResult::Stalled => true,
+        StepResult::Halted => false,
+        StepResult::Fault(fault) => panic!("{}", fault.diagnostic()),
+    }
 }
 
 fn trace_program(
@@ -243,7 +273,7 @@ fn hello_world_program_completes_and_writes_result() {
     let program = hello_world_program();
     let mut cpu = CpuState::new(W, latencies);
 
-    while step(&mut cpu, &program) {}
+    while step_checked_progress(&mut cpu, &program) {}
 
     assert!(cpu.halted);
     assert_eq!(cpu.pc, program.len());
@@ -262,7 +292,7 @@ fn system_single_cpu_matches_direct_cpu_execution() {
 
     let program = hello_world_program();
     let mut direct = CpuState::new(W, latencies.clone());
-    while step(&mut direct, &program) {}
+    while step_checked_progress(&mut direct, &program) {}
 
     let layout = canonical_layout(W);
     let mut system = System::new(layout, vec![program], latencies).unwrap();
@@ -456,7 +486,7 @@ fn small_width_fixtures_run_to_halt() {
         let source = std::fs::read_to_string(path).expect("fixture exists");
         let program = parse_program(&source).expect("fixture parses");
         let mut cpu = CpuState::new_for_layout(&program.layout, LatencyTable::default());
-        while cpu.step(&program.layout, &program.bundles) {}
+        while step_checked_progress_with_layout(&mut cpu, &program.layout, &program.bundles) {}
 
         assert!(cpu.halted, "{path}: cpu did not halt");
         assert_eq!(cpu.read_gpr(1), 6, "{path}: r1");
@@ -482,7 +512,7 @@ fn illegal_bundle_wrong_slot_halts_before_execution() {
     bad.set_slot(0, ret());
     let program = vec![bad];
 
-    assert!(!step(&mut cpu, &program));
+    assert!(!step_checked_progress(&mut cpu, &program));
     assert!(cpu.halted);
     assert_eq!(cpu.pc, 0);
     assert_eq!(cpu.cycle, 0);
@@ -507,7 +537,7 @@ fn illegal_same_bundle_raw_halts_before_execution() {
     );
     let program = vec![bad];
 
-    assert!(!step(&mut cpu, &program));
+    assert!(!step_checked_progress(&mut cpu, &program));
     assert!(cpu.halted);
     assert_eq!(cpu.pc, 0);
     assert_eq!(cpu.cycle, 0);
@@ -535,30 +565,30 @@ fn scoreboard_stalls_until_producer_ready() {
 
     let program = vec![b0, b1, b2];
 
-    assert!(step(&mut cpu, &program));
+    assert!(step_checked_progress(&mut cpu, &program));
     assert_eq!(cpu.pc, 1);
     assert_eq!(cpu.cycle, 1);
     assert_eq!(cpu.read_gpr(3), 42);
 
-    assert!(step(&mut cpu, &program));
+    assert!(step_checked_progress(&mut cpu, &program));
     assert_eq!(cpu.pc, 1);
     assert_eq!(cpu.cycle, 2);
     let stored = u64::from_le_bytes(cpu.memory[0x100..0x108].try_into().unwrap());
     assert_eq!(stored, 0);
 
-    assert!(step(&mut cpu, &program));
+    assert!(step_checked_progress(&mut cpu, &program));
     assert_eq!(cpu.pc, 1);
     assert_eq!(cpu.cycle, 3);
 
-    assert!(step(&mut cpu, &program));
+    assert!(step_checked_progress(&mut cpu, &program));
     assert_eq!(cpu.pc, 1);
     assert_eq!(cpu.cycle, 4);
 
-    assert!(step(&mut cpu, &program));
+    assert!(step_checked_progress(&mut cpu, &program));
     assert_eq!(cpu.pc, 1);
     assert_eq!(cpu.cycle, 5);
 
-    assert!(step(&mut cpu, &program));
+    assert!(step_checked_progress(&mut cpu, &program));
     assert_eq!(cpu.pc, 2);
     assert_eq!(cpu.cycle, 6);
     let stored = u64::from_le_bytes(cpu.memory[0x100..0x108].try_into().unwrap());
@@ -635,7 +665,7 @@ fn shifts_and_load_widths_behave_as_expected() {
     b7.set_slot(3, ret());
 
     let program = vec![b0, b1, b2, b3, b4, b5, b6, b7];
-    while step(&mut cpu, &program) {}
+    while step_checked_progress(&mut cpu, &program) {}
 
     assert_eq!(cpu.read_gpr(3), 64);
     assert_eq!(cpu.read_gpr(4), 0x0f00_0000_0000_0000);
@@ -670,7 +700,7 @@ fn predicate_logic_and_branch_control_skip_work() {
     b5.set_slot(3, ret());
 
     let program = vec![b0, b1, b2, b3, b4, b5];
-    while step(&mut cpu, &program) {}
+    while step_checked_progress(&mut cpu, &program) {}
 
     assert!(cpu.read_pred(1));
     assert!(!cpu.read_pred(2));
@@ -696,7 +726,7 @@ fn call_and_return_follow_link_register() {
     let program = vec![b0, b1, b2];
 
     let mut steps = 0usize;
-    while step(&mut cpu, &program) {
+    while step_checked_progress(&mut cpu, &program) {
         steps += 1;
         assert!(steps < 10, "call/return flow should terminate");
     }
@@ -734,6 +764,63 @@ fn main_binary_requires_program_path() {
     let stderr = String::from_utf8(output.stderr).expect("stderr should be utf8");
     assert!(stderr.contains("usage:"));
     assert!(stderr.contains("<program.vliw>"));
+}
+
+#[test]
+fn main_binary_exits_nonzero_on_out_of_bounds_store() {
+    let path = write_temp_vliw(
+        "oob-store",
+        &format!(
+            "{}{}",
+            processor_header(W),
+            r#"
+{
+  m : store_d r0, r0, 0x10000
+}
+"#
+        ),
+    );
+
+    let output = std::process::Command::new(env!("CARGO_BIN_EXE_vliw_simulator"))
+        .arg(&path)
+        .output()
+        .expect("binary should run");
+
+    assert_eq!(output.status.code(), Some(1));
+    let stderr = String::from_utf8(output.stderr).expect("stderr should be utf8");
+    assert!(
+        stderr.contains("error: store at 0x10000 (width=8) is out of bounds (memory size=0x10000)"),
+        "{stderr}"
+    );
+}
+
+#[test]
+fn trace_mode_exits_nonzero_on_out_of_bounds_load() {
+    let path = write_temp_vliw(
+        "oob-load",
+        &format!(
+            "{}{}",
+            processor_header(W),
+            r#"
+{
+  m : load_d r1, r0, 0xffff
+}
+"#
+        ),
+    );
+
+    let output = std::process::Command::new(env!("CARGO_BIN_EXE_vliw_simulator"))
+        .arg("--trace")
+        .arg(&path)
+        .output()
+        .expect("binary should run");
+
+    assert_eq!(output.status.code(), Some(1));
+    let stderr = String::from_utf8(output.stderr).expect("stderr should be utf8");
+    assert!(
+        stderr.contains("error: load at 0xffff (width=8) is out of bounds (memory size=0x10000)"),
+        "{stderr}"
+    );
 }
 
 #[test]
@@ -1219,7 +1306,7 @@ fn fp_and_aes_units_parse_verify_and_execute_placeholders() {
     assert!(program.layout.slot_can_execute(3, Opcode::AesEnc));
 
     let mut cpu = CpuState::new(W, LatencyTable::default());
-    while cpu.step(&program.layout, &program.bundles) {}
+    while step_checked_progress_with_layout(&mut cpu, &program.layout, &program.bundles) {}
 
     assert!(cpu.halted);
     assert_eq!(cpu.read_gpr(3), 42);
@@ -1475,7 +1562,7 @@ fn opcode_matrix_covers_remaining_execution_paths() {
         b0, b1, b2, b3, b4, b5, b6, b7, b8, b9, b10, b11, b12, b13, b14, b15, b16, b17,
     ];
 
-    while step(&mut cpu, &program) {}
+    while step_checked_progress(&mut cpu, &program) {}
 
     assert_eq!(cpu.read_gpr(1), 0x55);
     assert_eq!(cpu.read_gpr(2), 0x0f);
@@ -1513,7 +1600,7 @@ fn illegal_same_bundle_gpr_waw_halts_before_execution() {
     bad.set_slot(1, mov_imm(1, 7));
     let program = vec![bad];
 
-    assert!(!step(&mut cpu, &program));
+    assert!(!step_checked_progress(&mut cpu, &program));
     assert!(cpu.halted);
     assert_eq!(cpu.pc, 0);
     assert_eq!(cpu.read_gpr(1), 0);
@@ -1528,7 +1615,7 @@ fn illegal_same_bundle_ret_dependency_halts_before_execution() {
     bad.set_slot(3, ret());
     let program = vec![bad];
 
-    assert!(!step(&mut cpu, &program));
+    assert!(!step_checked_progress(&mut cpu, &program));
     assert!(cpu.halted);
     assert_eq!(cpu.pc, 0);
     assert_eq!(cpu.read_gpr(31), 0);
@@ -1544,7 +1631,7 @@ fn illegal_same_bundle_call_ret_dependency_halts_wide_bundle() {
     bad.set_slot(7, ret());
     let program = vec![bad];
 
-    assert!(!step(&mut cpu, &program));
+    assert!(!step_checked_progress(&mut cpu, &program));
     assert!(cpu.halted);
     assert_eq!(cpu.pc, 0);
     assert_eq!(cpu.cycle, 0);
@@ -1561,7 +1648,7 @@ fn illegal_same_bundle_predicate_raw_halts_before_execution() {
     bad.set_slot(3, branch(1, false, 0));
     let program = vec![bad];
 
-    assert!(!step(&mut cpu, &program));
+    assert!(!step_checked_progress(&mut cpu, &program));
     assert!(cpu.halted);
     assert_eq!(cpu.pc, 0);
 }
@@ -1575,7 +1662,7 @@ fn illegal_same_bundle_predicate_waw_halts_before_execution() {
     bad.set_slot(3, p_not(1, 0));
     let program = vec![bad];
 
-    assert!(!step(&mut cpu, &program));
+    assert!(!step_checked_progress(&mut cpu, &program));
     assert!(cpu.halted);
     assert_eq!(cpu.pc, 0);
 }
@@ -1595,26 +1682,26 @@ fn ret_stalls_until_link_register_ready() {
 
     let program = vec![b0, b1];
 
-    assert!(step(&mut cpu, &program));
+    assert!(step_checked_progress(&mut cpu, &program));
     assert_eq!(cpu.pc, 1);
     assert_eq!(cpu.cycle, 1);
     assert_eq!(cpu.read_gpr(31), 3);
 
-    assert!(step(&mut cpu, &program));
+    assert!(step_checked_progress(&mut cpu, &program));
     assert_eq!(cpu.pc, 1);
     assert_eq!(cpu.cycle, 2);
 
-    assert!(step(&mut cpu, &program));
+    assert!(step_checked_progress(&mut cpu, &program));
     assert_eq!(cpu.pc, 1);
     assert_eq!(cpu.cycle, 3);
 
     assert!(!cpu.halted);
-    assert!(step(&mut cpu, &program));
+    assert!(step_checked_progress(&mut cpu, &program));
     assert_eq!(cpu.pc, 3);
     assert_eq!(cpu.cycle, 4);
     assert!(!cpu.halted);
 
-    assert!(!step(&mut cpu, &program));
+    assert!(!step_checked_progress(&mut cpu, &program));
     assert_eq!(cpu.pc, 3);
     assert!(!cpu.halted);
 }
@@ -1634,46 +1721,70 @@ fn ret_stalls_until_call_link_register_ready() {
 
     let program = vec![b0, b1];
 
-    assert!(step(&mut cpu, &program));
+    assert!(step_checked_progress(&mut cpu, &program));
     assert_eq!(cpu.pc, 1);
     assert_eq!(cpu.cycle, 1);
     assert_eq!(cpu.read_gpr(31), 1);
 
-    assert!(step(&mut cpu, &program));
+    assert!(step_checked_progress(&mut cpu, &program));
     assert_eq!(cpu.pc, 1);
     assert_eq!(cpu.cycle, 2);
 
-    assert!(step(&mut cpu, &program));
+    assert!(step_checked_progress(&mut cpu, &program));
     assert_eq!(cpu.pc, 1);
     assert_eq!(cpu.cycle, 3);
 
-    assert!(step(&mut cpu, &program));
+    assert!(step_checked_progress(&mut cpu, &program));
     assert_eq!(cpu.pc, 1);
     assert_eq!(cpu.cycle, 4);
 }
 
 #[test]
-fn out_of_bounds_loads_return_zero() {
+fn out_of_bounds_load_panics_with_diagnostic() {
     let mut cpu = CpuState::new(W, LatencyTable::default());
 
     let mut b0 = Bundle::nop_bundle(W);
-    b0.set_slot(2, load_h(1, 0, 65535));
+    b0.set_slot(2, load_d(1, 0, 0xffff));
 
-    let mut b1 = Bundle::nop_bundle(W);
-    b1.set_slot(2, load_w(2, 0, 65533));
+    let program = vec![b0];
+    let err = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+        let layout = canonical_layout(W);
+        cpu.trace_program(&layout, &program);
+    }))
+    .expect_err("out-of-bounds load should panic");
+    let message = panic_message(err);
 
-    let mut b2 = Bundle::nop_bundle(W);
-    b2.set_slot(2, load_d(3, 0, 65529));
+    assert!(
+        message.contains("error: load at 0xffff (width=8) is out of bounds (memory size=0x10000)"),
+        "{message}"
+    );
+}
 
-    let mut b3 = Bundle::nop_bundle(W);
-    b3.set_slot(3, ret());
+#[test]
+fn step_checked_reports_structured_out_of_bounds_fault() {
+    let mut cpu = CpuState::new(W, LatencyTable::default());
 
-    let program = vec![b0, b1, b2, b3];
-    while step(&mut cpu, &program) {}
+    let mut b0 = Bundle::nop_bundle(W);
+    b0.set_slot(2, store_d(0, 1, 0x10000));
 
-    assert_eq!(cpu.read_gpr(1), 0);
-    assert_eq!(cpu.read_gpr(2), 0);
-    assert_eq!(cpu.read_gpr(3), 0);
+    let layout = canonical_layout(W);
+    let program = vec![b0];
+    let result = cpu.step_checked(&layout, &program);
+
+    match result {
+        StepResult::Fault(fault) => {
+            assert_eq!(fault.kind, MemoryFaultKind::Store);
+            assert_eq!(fault.address, 0x10000);
+            assert_eq!(fault.width_bytes, 8);
+            assert_eq!(fault.memory_size, 0x10000);
+            assert_eq!(
+                fault.diagnostic(),
+                "error: store at 0x10000 (width=8) is out of bounds (memory size=0x10000)"
+            );
+        }
+        other => panic!("expected memory fault, got {other:?}"),
+    }
+    assert!(cpu.halted);
 }
 
 #[test]
@@ -1710,7 +1821,7 @@ fn predicate_ops_with_none_sources_use_false_default() {
     b2.set_slot(3, ret());
 
     let program = vec![b0, b1, b2];
-    while step(&mut cpu, &program) {}
+    while step_checked_progress(&mut cpu, &program) {}
 
     assert!(cpu.read_pred(1));
     assert!(!cpu.read_pred(2));
@@ -1783,7 +1894,7 @@ fn acqload_reads_memory_like_load_d() {
     b1.set_slot(3, ret());
 
     let program = vec![b0, b1];
-    while step(&mut cpu, &program) {}
+    while step_checked_progress(&mut cpu, &program) {}
 
     assert_eq!(cpu.read_gpr(1), 0x8877_6655_4433_2211);
 }
@@ -1801,7 +1912,7 @@ fn relstore_writes_memory_like_store_d() {
     b1.set_slot(3, ret());
 
     let program = vec![b0, b1];
-    while step(&mut cpu, &program) {}
+    while step_checked_progress(&mut cpu, &program) {}
 
     let stored = u64::from_le_bytes(cpu.memory[0x300..0x308].try_into().unwrap());
     assert_eq!(stored, 0xdead_beef_cafe_1234);

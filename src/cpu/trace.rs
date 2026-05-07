@@ -301,6 +301,9 @@ impl CpuState {
         let in_bounds = memory_access_in_bounds(self.mem_size, address, width_bytes);
 
         if is_load_opcode(syl.opcode) {
+            if !in_bounds {
+                panic!("{}", memory_bounds_error("load", address, width_bytes, self.mem_size));
+            }
             let value = match width_bytes {
                 1 => self.load8(address) as u64,
                 2 => self.load16(address) as u64,
@@ -317,6 +320,9 @@ impl CpuState {
                 cache_outcome: self.cache.peek_outcome(address),
             })
         } else {
+            if !in_bounds {
+                panic!("{}", memory_bounds_error("store", address, width_bytes, self.mem_size));
+            }
             let raw = self.read_src_gpr(syl.src[1]);
             let value = mask_to_width(raw, width_bytes);
             Some(TraceMemoryEffect::Store {
@@ -556,6 +562,12 @@ fn is_load_opcode(opcode: Opcode) -> bool {
 
 fn memory_access_in_bounds(mem_size: usize, address: usize, width_bytes: usize) -> bool {
     width_bytes <= mem_size && address <= mem_size - width_bytes
+}
+
+fn memory_bounds_error(kind: &str, address: usize, width_bytes: usize, mem_size: usize) -> String {
+    format!(
+        "error: {kind} at 0x{address:x} (width={width_bytes}) is out of bounds (memory size=0x{mem_size:x})"
+    )
 }
 
 fn mask_to_width(value: u64, width_bytes: usize) -> u64 {
